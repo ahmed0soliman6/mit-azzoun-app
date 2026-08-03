@@ -1,0 +1,18 @@
+{
+  "name": "نظام إدارة مجمع ميت عزون الطبي",
+  "short_name": "مجمع ميت عزون",
+  "description": "نظام إدارة مجمع ميت عزون الطبي - جمعية تنمية المجتمع",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#FFFFFF",
+  "theme_color": "#183E9F",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
