@@ -2,8 +2,8 @@ const CACHE_NAME = "mit-azzoun-clinic-v4-9-10";
 const SHELL_FILES = [
   "./index.html",
   "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
+  "./icon-192.png",
+  "./icon-512.png",
 ];
 
 // عند التثبيت: نخزّن ملفات التطبيق الأساسية (App Shell) عشان تفتح فورًا حتى بدون إنترنت
