@@ -1738,7 +1738,7 @@ const SB_CRED_KEY = APP_PREFIX + "supabase_credentials";
 // على أي جهاز أو متصفح دون الحاجة لإدخالها يدويًا فى كل مرة.
 // رقم إصدار النظام - يُحدَّث يدويًا مع كل تعديل حقيقى فى الكود، ليسهل معرفة
 // هل الهاتف شغّال بأحدث نسخة أم لا بمجرد النظر لصفحة الإعدادات، بدل تخمين ذلك.
-const APP_VERSION = "v4.9.16 — زر «تحصيل دفعة» بجوار إجمالي المتبقي يسدد أقدم الزيارات غير المسددة أولًا (2026-08-07)";
+const APP_VERSION = "v4.9.17 — تحصيل الدفعة يسجّل الآن زيارة متابعة حقيقية بتاريخ التحصيل فى اليومية (2026-08-07)";
 
 const DEFAULT_SB_URL = "https://yxgcxcrjwzpelvkihntj.supabase.co";
 const DEFAULT_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl4Z2N4Y3Jqd3pwZWx2a2lobnRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4ODE3MzcsImV4cCI6MjEwMDQ1NzczN30.EGGIKdvVL6Hb9nbBS5L36TN6A97w_VVVtPESfzsn2vQ";
@@ -3302,10 +3302,17 @@ function renderPatientFilesPage(kind) {
   }));
   // تحصيل دفعة سريعة على مستحق قديم: بدل ما يُضطر المستخدم يفتح الزيارة القديمة
   // كاملة للتعديل، أو (الأخطر) يسجّل زيارة جديدة منفصلة ظنًا منه أن هذا يُسقِط
-  // الدين القديم (وهو لا يفعل - كل زيارة رصيدها مستقل تمامًا) - هذا الزر يزيد
-  // المبلغ "المدفوع" على نفس الزيارة القديمة مباشرة، فينخفض "الباقي" فورًا
-  // ويختفي المريض من "مرضى عليهم مستحقات" بمجرد سداد كل زياراته، بلا أي زيارة
-  // وهمية جديدة تُسجَّل فى السجل.
+  // الدين القديم (وهو لا يفعل - كل زيارة رصيدها مستقل تمامًا).
+  // طريقة العمل (بعد التعديل بناءً على طلب صريح): بدل ما نزوّد "المدفوع" على
+  // الزيارة القديمة نفسها (وهو ما كان يُخفي مبلغ التحصيل داخل تاريخ الزيارة
+  // القديمة، فلا يظهر إيراد اليوم فعليًا فى يومية العيادات/الأسنان ولا فى تقرير
+  // اليوم) - دلوقتي بننقص "الإجمالي" على الزيارة القديمة بمقدار المبلغ المحصَّل
+  // (فينخفض "الباقي" عليها بنفس القدر، بالظبط زي الأول)، ثم نُنشئ زيارة "متابعة"
+  // جديدة حقيقية بتاريخ اليوم، إجماليها ومدفوعها = المبلغ المحصَّل بالظبط (فباقيها
+  // صفر دايمًا، مفيش دَين جديد) - فتظهر فى يومية القسم كزيارة اليوم، ويُحتسب
+  // إيرادها ونصيب الطبيب/المجمع منها ليومها الصحيح، من غير أي ازدواج فى الحساب:
+  // (إجمالى الزيارة القديمة بعد الخصم) + (إجمالى زيارة التحصيل الجديدة) = نفس
+  // الإجمالى الأصلى تمامًا كما كان قبل التحصيل.
   c.querySelectorAll("[data-collect]").forEach(b => b.addEventListener("click", async () => {
     const kindKey = b.dataset.kind;
     const list = kindKey === "dental" ? DB.visitsDental : DB.visitsClinic;
@@ -3318,10 +3325,16 @@ function renderPatientFilesPage(kind) {
     if (!amount || amount <= 0) { showToast("⚠️ ادخل مبلغًا صحيحًا أكبر من صفر"); return; }
     if (amount > remaining + 0.009) amount = remaining; // لا يمكن تحصيل أكثر من الباقي الفعلي على هذه الزيارة
     const oldRec = { ...rec };
-    rec.paid = (Number(rec.paid) || 0) + amount;
+    rec.total = (Number(rec.total) || 0) - amount;
     rec.status = visitRemaining(rec) <= 0.009 ? "تم" : "جزئي";
     logActivity(kindKey === "dental" ? "تحصيل دفعة أسنان" : "تحصيل دفعة عيادات", kindKey, oldRec, rec);
-    syncVisitIncomeLink(rec, kindKey);
+    const collectionVisit = {
+      id: uid(), date: todayISO(), fileNo: rec.fileNo || "", patient: rec.patient, phone: rec.phone,
+      doctorId: rec.doctorId, examType: "متابعة", total: amount, paid: amount, status: "تم",
+      notes: `تحصيل دفعة من مستحق زيارة ${rec.date || ""}`, nextVisitDate: "", createdAt: nowISO(),
+    };
+    list.push(collectionVisit);
+    syncVisitIncomeLink(collectionVisit, kindKey);
     let pushFailedOnline = false;
     try {
       await persist(kindKey === "dental" ? "visitsDental" : "visitsClinic");
@@ -3332,7 +3345,7 @@ function renderPatientFilesPage(kind) {
     if (pushFailedOnline) {
       showToast(`💾 تم تسجيل التحصيل محليًا — تعذّر رفعه للسحابة الآن وسيُعاد رفعه تلقائيًا عند توفر الاتصال`, 3800);
     } else {
-      saveToast(`تم تحصيل ${fmt(amount)} ج.م بنجاح`);
+      saveToast(`تم تحصيل ${fmt(amount)} ج.م بنجاح — وسُجِّلت زيارة متابعة بتاريخ اليوم`);
     }
     route();
   }));
@@ -3341,6 +3354,10 @@ function renderPatientFilesPage(kind) {
   // فى الواقع: تتقفل أقدم زيارة غير مسددة أولًا، ولو زاد المبلغ ينتقل للتالية،
   // وهكذا حتى ينفد المبلغ أو تُسدَّد كل الزيارات. مفيد جدًا لو المريض عليه أكتر
   // من زيارة قديمة غير مسددة ومش عايز تدوّر عليهم واحدة واحدة.
+  // نفس منطق التحصيل الفردى: بننقص "الإجمالي" على كل زيارة قديمة اتحصّل منها
+  // جزء (مش نزوّد "المدفوع" عليها)، ثم نُنشئ زيارة "متابعة" واحدة بتاريخ اليوم
+  // بكامل المبلغ المحصَّل دفعة واحدة (إجمالي = مدفوع = المبلغ، فباقيها صفر) -
+  // فيظهر التحصيل كإيراد حقيقى فى يومية اليوم، من غير أي ازدواج فى الحساب.
   c.querySelectorAll("[data-collect-total]").forEach(b => b.addEventListener("click", async () => {
     const g2 = allGroups.find(x => x.key === b.dataset.collectTotal);
     if (!g2) return;
@@ -3355,6 +3372,7 @@ function renderPatientFilesPage(kind) {
       .slice().sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.createdAt || "").localeCompare(b.createdAt || ""));
     let remainingToApply = amount;
     let visitsSettled = 0;
+    let firstTouchedDoctorId = null, firstTouchedDate = null, firstTouchedKindKey = null;
     const touchedTables = new Set();
     for (const v of unpaidOldestFirst) {
       if (remainingToApply <= 0.009) break;
@@ -3365,13 +3383,25 @@ function renderPatientFilesPage(kind) {
       const remaining = visitRemaining(rec);
       const applyNow = Math.min(remaining, remainingToApply);
       const oldRec = { ...rec };
-      rec.paid = (Number(rec.paid) || 0) + applyNow;
+      rec.total = (Number(rec.total) || 0) - applyNow;
       rec.status = visitRemaining(rec) <= 0.009 ? "تم" : "جزئي";
       logActivity(kindKey === "dental" ? "تحصيل دفعة أسنان" : "تحصيل دفعة عيادات", kindKey, oldRec, rec);
-      syncVisitIncomeLink(rec, kindKey);
       touchedTables.add(kindKey === "dental" ? "visitsDental" : "visitsClinic");
+      if (firstTouchedDoctorId === null) { firstTouchedDoctorId = rec.doctorId; firstTouchedDate = rec.date; firstTouchedKindKey = kindKey; }
       remainingToApply -= applyNow;
       if (rec.status === "تم") visitsSettled++;
+    }
+    // زيارة "متابعة" واحدة بتاريخ اليوم تمثّل كامل المبلغ المحصَّل فى هذه العملية
+    if (firstTouchedKindKey) {
+      const collectionList = firstTouchedKindKey === "dental" ? DB.visitsDental : DB.visitsClinic;
+      const collectionVisit = {
+        id: uid(), date: todayISO(), fileNo: g2.fileNos[0] || "", patient: g2.name, phone: g2.phone,
+        doctorId: firstTouchedDoctorId, examType: "متابعة", total: amount, paid: amount, status: "تم",
+        notes: `تحصيل دفعة من مستحقات قديمة (بدءًا من زيارة ${firstTouchedDate || ""})`, nextVisitDate: "", createdAt: nowISO(),
+      };
+      collectionList.push(collectionVisit);
+      syncVisitIncomeLink(collectionVisit, firstTouchedKindKey);
+      touchedTables.add(firstTouchedKindKey === "dental" ? "visitsDental" : "visitsClinic");
     }
     let pushFailedOnline = false;
     try {
@@ -3383,7 +3413,7 @@ function renderPatientFilesPage(kind) {
     if (pushFailedOnline) {
       showToast(`💾 تم تسجيل التحصيل محليًا — تعذّر رفعه للسحابة الآن وسيُعاد رفعه تلقائيًا عند توفر الاتصال`, 3800);
     } else {
-      saveToast(`تم تحصيل ${fmt(amount)} ج.م بنجاح${visitsSettled ? ` — تم سداد ${visitsSettled} ${visitsSettled === 1 ? "زيارة" : "زيارات"} بالكامل` : ""}`);
+      saveToast(`تم تحصيل ${fmt(amount)} ج.م بنجاح${visitsSettled ? ` — تم سداد ${visitsSettled} ${visitsSettled === 1 ? "زيارة" : "زيارات"} بالكامل` : ""} — وسُجِّلت زيارة متابعة بتاريخ اليوم`);
     }
     route();
   }));
