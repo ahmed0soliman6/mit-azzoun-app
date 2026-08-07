@@ -1,4 +1,4 @@
-const CACHE_NAME = "mit-azzoun-clinic-v4-9-11";
+const CACHE_NAME = "mit-azzoun-clinic-v4-9-16";
 const SHELL_FILES = [
   "./index.html",
   "./manifest.json",
