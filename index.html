@@ -347,7 +347,10 @@ const PERMISSION_MODULES = [
   { key: "dental", label: "إدارة الأسنان", actions: [
     { key: "view", label: "عرض" }, { key: "add", label: "إضافة حالة" }, { key: "edit", label: "تعديل حالة" }, { key: "delete", label: "حذف حالة" },
   ]},
-  { key: "patientFiles", label: "ملفات المرضى", actions: [
+  { key: "patientFilesClinic", label: "ملفات مرضى العيادات", actions: [
+    { key: "view", label: "عرض" },
+  ]},
+  { key: "patientFilesDental", label: "ملفات مرضى الأسنان", actions: [
     { key: "view", label: "عرض" },
   ]},
   { key: "income", label: "إدارة الوارد", actions: [
@@ -1735,7 +1738,7 @@ const SB_CRED_KEY = APP_PREFIX + "supabase_credentials";
 // على أي جهاز أو متصفح دون الحاجة لإدخالها يدويًا فى كل مرة.
 // رقم إصدار النظام - يُحدَّث يدويًا مع كل تعديل حقيقى فى الكود، ليسهل معرفة
 // هل الهاتف شغّال بأحدث نسخة أم لا بمجرد النظر لصفحة الإعدادات، بدل تخمين ذلك.
-const APP_VERSION = "v4.9.11 — إلغاء استبعاد زيارات المتابعة من حساب نسبة وحصص أطباء النسبة (2026-08-04)";
+const APP_VERSION = "v4.9.16 — زر «تحصيل دفعة» بجوار إجمالي المتبقي يسدد أقدم الزيارات غير المسددة أولًا (2026-08-07)";
 
 const DEFAULT_SB_URL = "https://yxgcxcrjwzpelvkihntj.supabase.co";
 const DEFAULT_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl4Z2N4Y3Jqd3pwZWx2a2lobnRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4ODE3MzcsImV4cCI6MjEwMDQ1NzczN30.EGGIKdvVL6Hb9nbBS5L36TN6A97w_VVVtPESfzsn2vQ";
@@ -2066,8 +2069,9 @@ const NAV = [
   ]},
   { group: "العيادات", items: [
     { id: "clinic", label: "يومية العيادات", icon: "&#127973;", perm: ["clinic","view"] },
+    { id: "patientFilesClinic", label: "ملفات مرضى العيادات", icon: "&#128193;", perm: ["patientFilesClinic","view"] },
     { id: "dental", label: "يومية الأسنان", icon: "&#129525;", perm: ["dental","view"] },
-    { id: "patientFiles", label: "ملفات المرضى", icon: "&#128193;", perm: ["patientFiles","view"] },
+    { id: "patientFilesDental", label: "ملفات مرضى الأسنان", icon: "&#128193;", perm: ["patientFilesDental","view"] },
   ]},
   { group: "الخزينة", items: [
     { id: "income", label: "الوارد", icon: "&#8593;", perm: ["income","view"] },
@@ -2095,7 +2099,6 @@ function isAdminUser() {
 function navItemVisible(it) {
   if (it.customCheck === "settings") return hasAnySettingsAccess();
   if (it.customCheck === "admin") return isAdminUser();
-  if (it.customCheck === "patientFiles") return can("clinic","view") || can("dental","view");
   if (it.perm) return can(it.perm[0], it.perm[1]);
   return true;
 }
@@ -2119,10 +2122,10 @@ const PAGE_TITLES = {
   ledger: "دفتر الخزينة", payroll: "المرتبات والمستحقات",
   reports: "التقارير", settings: "الإعدادات",
   users: "إدارة المستخدمين", permissions: "إدارة الصلاحيات", auditlog: "سجل النشاط",
-  patientFiles: "ملفات المرضى", outstandingBalancesClinic: "مرضى العيادات عليهم مستحقات", outstandingBalancesDental: "مرضى الأسنان عليهم مستحقات",
+  patientFilesClinic: "ملفات مرضى العيادات", patientFilesDental: "ملفات مرضى الأسنان", outstandingBalancesClinic: "مرضى العيادات عليهم مستحقات", outstandingBalancesDental: "مرضى الأسنان عليهم مستحقات",
 };
 
-let state = { page: "dashboard", editId: null, editDocId: null, editUserId: null, editEmpId: null, dashboardPeriod: "today", dashboardDoctor: "", patientSearch: "", selectedPatientKey: null, closingMonth: null, ledgerSearch: "", ledgerReceipt: null, incomeMonth: null, expenseMonth: null, ledgerMonth: null, payrollMonth: null, tablePage: {} };
+let state = { page: "dashboard", editId: null, editDocId: null, editUserId: null, editEmpId: null, dashboardPeriod: "today", dashboardDoctor: "", patientSearch: "", patientSearchOpen: false, selectedPatientKey: null, closingMonth: null, ledgerSearch: "", ledgerReceipt: null, incomeMonth: null, expenseMonth: null, ledgerMonth: null, payrollMonth: null, tablePage: {} };
 
 function renderSidebar() {
   const el = document.getElementById("sidebar");
@@ -2447,7 +2450,8 @@ const PAGE_GUARD = {
   clinic: ["clinic","view"], dental: ["dental","view"],
   income: ["income","view"], expense: ["expense","view"],
   payroll: ["payroll","view"], ledger: ["ledger","view"],
-  patientFiles: ["patientFiles","view"],
+  patientFilesClinic: ["patientFilesClinic","view"],
+  patientFilesDental: ["patientFilesDental","view"],
   outstandingBalancesClinic: ["outstandingBalancesClinic","view"],
   outstandingBalancesDental: ["outstandingBalancesDental","view"],
   reports: ["reports","view"],
@@ -2470,7 +2474,9 @@ function route() {
     expense: () => renderMoneyPage("expense"), ledger: renderLedger,
     payroll: renderPayroll, reports: renderReports, settings: renderSettings,
     users: renderUsersPage, permissions: renderPermissionsPage, auditlog: renderAuditLogPage,
-    dataConflicts: renderDataConflicts, patientFiles: renderPatientFiles,
+    dataConflicts: renderDataConflicts,
+    patientFilesClinic: () => renderPatientFilesPage("عيادات"),
+    patientFilesDental: () => renderPatientFilesPage("أسنان"),
     outstandingBalancesClinic: () => renderOutstandingBalances("عيادات"),
     outstandingBalancesDental: () => renderOutstandingBalances("أسنان"),
   };
@@ -2830,7 +2836,11 @@ function renderVisitsPage(kind) {
       <form id="visitForm" class="form-grid visit-grid-3">
         <div class="field"><label>التاريخ</label><input type="date" name="date" required value="${editing?.date || todayISO()}"></div>
         <input type="hidden" name="fileNo" id="visitFileNoInput" value="${esc(editing ? editing.fileNo : "")}">
-        <div class="field" style="grid-column:span 2;"><label>اسم المريض</label><input type="text" name="patient" id="visitPatientInput" required value="${esc(editing?.patient)}"></div>
+        <div class="field" style="grid-column:span 2; position:relative;">
+          <label>اسم المريض</label>
+          <input type="text" name="patient" id="visitPatientInput" required autocomplete="off" value="${esc(editing?.patient)}">
+          <div id="visitPatientSuggest" style="display:none; position:absolute; z-index:20; top:100%; right:0; left:0; background:#fff; border:1px solid var(--border,#ccc); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.12); max-height:220px; overflow:auto;"></div>
+        </div>
         <div class="field"><label>رقم الهاتف</label><input type="text" name="phone" id="visitPhoneInput" value="${esc(editing?.phone)}"></div>
         <div class="field"><label>الطبيب</label>
           <select name="doctorId" id="visitDoctorSelect" required>
@@ -2893,6 +2903,44 @@ function renderVisitsPage(kind) {
 
   bindPaginationEvents(c);
   bindPeriodFilterEvents(`visit_${kind}`, granKey, valKey);
+
+  // اقتراحات تلقائية لاسم المريض: بتمنع مشكلة إن المريض يرجع تاني والموظف ينسى
+  // يكتب رقم الهاتف زي المرة اللي فاتت، فيعتبره النظام ملف جديد تمامًا منفصل عن
+  // تاريخه القديم (بدل ما يُحسب زيارة إضافية لنفس المريض). بمجرد ما يختار
+  // الموظف اسمًا من الاقتراحات، بيتملى رقم الهاتف (ورقم الملف لو موجود) تلقائيًا
+  // بنفس القيم المسجَّلة قبل كده، فيضمن ربط كل زياراته تحت ملف واحد دائمًا.
+  const patientInput = document.getElementById("visitPatientInput");
+  const phoneInput = document.getElementById("visitPhoneInput");
+  const fileNoInput = document.getElementById("visitFileNoInput");
+  const suggestBox = document.getElementById("visitPatientSuggest");
+  if (patientInput && suggestBox) {
+    const knownPatients = groupPatients(allPatientVisits());
+    patientInput.addEventListener("input", () => {
+      const q = patientInput.value.trim().toLowerCase();
+      if (q.length < 2) { suggestBox.style.display = "none"; suggestBox.innerHTML = ""; return; }
+      const matches = knownPatients.filter(g => (g.name || "").toLowerCase().includes(q)).slice(0, 6);
+      if (!matches.length) { suggestBox.style.display = "none"; suggestBox.innerHTML = ""; return; }
+      suggestBox.innerHTML = matches.map(g => `
+        <div class="patient-suggest-item" data-name="${esc(g.name)}" data-phone="${esc(g.phone)}" data-fileno="${esc(g.fileNos[0] || "")}"
+          style="padding:9px 12px; cursor:pointer; border-bottom:1px solid var(--border,#eee); font-size:13.5px;">
+          <div style="font-weight:700;">${esc(g.name)}</div>
+          <div class="hint" style="font-size:11.5px;">${g.phone ? "📞 " + esc(g.phone) : "بلا رقم هاتف مسجّل"} · ${g.visits.length} زيارة سابقة</div>
+        </div>`).join("");
+      suggestBox.style.display = "block";
+    });
+    suggestBox.addEventListener("click", (e) => {
+      const item = e.target.closest("[data-name]");
+      if (!item) return;
+      patientInput.value = item.dataset.name;
+      if (phoneInput && item.dataset.phone) phoneInput.value = item.dataset.phone;
+      if (fileNoInput && item.dataset.fileno) fileNoInput.value = item.dataset.fileno;
+      suggestBox.style.display = "none"; suggestBox.innerHTML = "";
+    });
+    // إخفاء الاقتراحات عند مغادرة الحقل - بتأخير بسيط عشان نداء الـ click على
+    // اقتراح مُختار يتنفَّذ الأول قبل ما الصندوق يختفي من تحت إصبع المستخدم.
+    patientInput.addEventListener("blur", () => { setTimeout(() => { suggestBox.style.display = "none"; }, 150); });
+    patientInput.addEventListener("focus", () => { if (patientInput.value.trim().length >= 2 && suggestBox.innerHTML) suggestBox.style.display = "block"; });
+  }
 
   const visitForm = document.getElementById("visitForm");
   // إصلاح: كان ممكن الضغط على "حفظ" أكتر من مرة بسرعة (لمس مزدوج بالغلط على
@@ -3094,12 +3142,16 @@ function renderPatientCard(g) {
       <div class="grid grid-3" style="margin-top:14px; gap:10px;">
         <div class="card kpi" style="box-shadow:none; border:1px solid var(--border,#eee);"><div class="label">عدد الزيارات</div><div class="value">${fmtInt(g.visits.length)}</div></div>
         <div class="card kpi" style="box-shadow:none; border:1px solid var(--border,#eee);"><div class="label">إجمالي المدفوع</div><div class="value income">${fmt(g.totalPaid)} ج.م</div></div>
-        <div class="card kpi" style="box-shadow:none; border:1px solid var(--border,#eee);"><div class="label">إجمالي المتبقي</div><div class="value" style="color:${g.totalDue > 0 ? "var(--expense)" : "var(--ink)"};">${fmt(g.totalDue)} ج.م</div></div>
+        <div class="card kpi" style="box-shadow:none; border:1px solid var(--border,#eee);">
+          <div class="label">إجمالي المتبقي</div>
+          <div class="value" style="color:${g.totalDue > 0 ? "var(--expense)" : "var(--ink)"};">${fmt(g.totalDue)} ج.م</div>
+          ${g.totalDue > 0.009 ? `<button class="btn sm" data-collect-total="${esc(g.key)}" style="background:var(--income,#1a7a4c); color:#fff; margin-top:8px; width:100%;">💰 تحصيل دفعة</button>` : ""}
+        </div>
       </div>
       ${g.nextFollowUp ? `<div style="margin-top:10px; color:#8A6300; font-weight:700; font-size:13px;">🔔 موعد متابعة قادم: ${g.nextFollowUp.nextVisitDate} (${g.nextFollowUp.kind})</div>` : ""}
     </div>
     <div class="card">
-      <div class="section-title">سجل الزيارات الكامل (عيادات + أسنان)</div>
+      <div class="section-title">سجل ${g.visits[0]?.kind === "أسنان" ? "حالات الأسنان" : "زيارات العيادات"}</div>
       <div class="table-wrap"><table>
         <thead><tr><th>التاريخ</th><th>القسم</th><th>الطبيب</th><th>النوع</th><th>الإجمالي</th><th>المدفوع</th><th>الباقي</th><th>الحالة</th><th>متابعة قادمة</th><th></th></tr></thead>
         <tbody>
@@ -3118,6 +3170,7 @@ function renderPatientCard(g) {
               <td>${v.nextVisitDate || "-"}</td>
               <td style="display:flex; gap:6px; flex-wrap:wrap;">
                 <button class="btn sm ghost" data-gotovisit="${v.id}" data-kind="${v.kindKey}">فتح للتعديل</button>
+                ${remaining > 0.009 ? `<button class="btn sm" data-collect="${v.id}" data-kind="${v.kindKey}" style="background:var(--income,#1a7a4c); color:#fff;">💰 تحصيل دفعة</button>` : ""}
                 ${waIconButtonHTML(v.phone, "wa-visit", v.id)}
               </td>
             </tr>`;
@@ -3126,16 +3179,22 @@ function renderPatientCard(g) {
       </table></div>
     </div>`;
 }
-function renderPatientFiles() {
+function renderPatientFilesPage(kind) {
   const c = document.getElementById("content");
-  const allVisits = allPatientVisits();
+  // كل صفحة (عيادات / أسنان) بقت مستقلة تمامًا: بياناتها، بحثها، فلاترها،
+  // والمريض المفتوح فيها - كل ده بحالة خاصة بيها (مفاتيح state مميّزة بلاحقة
+  // القسم) عشان التنقل بين الصفحتين ما يخلطش بحث/فلتر/مريض مفتوح فى واحدة
+  // مع التانية.
+  const ns = kind === "أسنان" ? "Dental" : "Clinic";
+  const K = (base) => base + ns;
+  const allVisits = allPatientVisits().filter(v => v.kind === kind);
   const allGroups = groupPatients(allVisits); // بدون فلاتر - تُستخدم للمتابعات القادمة وفتح ملف مريض بعينه
 
-  const granKey = "patientFilterGran", valKey = "patientFilterVal";
+  const granKey = "patientFilterGran" + ns, valKey = "patientFilterVal" + ns;
   ensurePeriodFilter(granKey, valKey);
   const granularity = state[granKey], filterValue = state[valKey];
-  if (!state.patientStatusFilter) state.patientStatusFilter = "all";
-  const statusFilter = state.patientStatusFilter;
+  if (!state[K("patientStatusFilter")]) state[K("patientStatusFilter")] = "all";
+  const statusFilter = state[K("patientStatusFilter")];
 
   const filteredVisits = allVisits.filter(v =>
     periodMatches(v.date, granularity, filterValue) &&
@@ -3143,7 +3202,8 @@ function renderPatientFiles() {
   );
   const groups = groupPatients(filteredVisits);
 
-  const q = (state.patientSearch || "").trim().toLowerCase();
+  const search = state[K("patientSearch")] || "";
+  const q = search.trim().toLowerCase();
   const filtered = q ? groups.filter(g =>
     (g.name || "").toLowerCase().includes(q) ||
     (g.phone || "").toLowerCase().includes(q) ||
@@ -3161,10 +3221,11 @@ function renderPatientFiles() {
   // أصلًا) واللي عندها رقم هاتف صالح - إرسال تذكير لموعد فات معناه ليس له داعٍ.
   const remindableCount = upcoming.filter(g => g.nextFollowUp.nextVisitDate >= todayISO() && sanitizePhoneForWhatsApp(g.phone)).length;
 
-  const selected = state.selectedPatientKey ? allGroups.find(g => g.key === state.selectedPatientKey) : null;
+  const selectedKey = state[K("selectedPatientKey")];
+  const selected = selectedKey ? allGroups.find(g => g.key === selectedKey) : null;
+  const hasQuery = !!q; // فيه بحث فعلى شغال دلوقتي؟
 
-  c.innerHTML = `
-    ${upcoming.length ? `
+  const upcomingPanelHTML = upcoming.length ? `
     <div class="card" style="margin-bottom:16px; border:1px solid #C79A3E;">
       <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
         <span>🔔 مواعيد متابعة قادمة <span class="hint">${upcoming.length}</span></span>
@@ -3183,10 +3244,11 @@ function renderPatientFiles() {
             </tr>`).join("")}
         </tbody>
       </table></div>
-    </div>` : ""}
+    </div>` : "";
 
+  const filtersHTML = `
     <div class="card" style="margin-bottom:16px; display:flex; align-items:end; justify-content:space-between; flex-wrap:wrap; gap:14px;">
-      ${periodFilterHTML("patient", granularity, filterValue, allVisits.map(v => v.date))}
+      ${periodFilterHTML("patient" + ns, granularity, filterValue, allVisits.map(v => v.date))}
       <div>
         <div class="section-title" style="margin:0 0 6px;">💳 حالة الدفع</div>
         <select id="patientStatusSelect" style="padding:9px 10px; border-radius:8px; border:1px solid var(--border,#ccc); font-size:13.5px;">
@@ -3194,36 +3256,137 @@ function renderPatientFiles() {
           ${LISTS.payStatus.map(s => `<option value="${s}" ${statusFilter === s ? "selected" : ""}>${s}</option>`).join("")}
         </select>
       </div>
+    </div>`;
+
+  c.innerHTML = `
+    <div style="position:relative; margin-bottom:16px;">
+      <span style="position:absolute; top:50%; right:14px; transform:translateY(-50%); font-size:15px; pointer-events:none; opacity:.65;">🔍</span>
+      <input type="text" id="patientSearchInput" placeholder="ابحث باسم المريض أو رقم الهاتف أو رقم الملف..." value="${esc(search)}"
+        style="width:100%; padding:11px 42px 11px 14px; border-radius:10px; border:1px solid var(--border,#ccc); font-size:14px; background:#fff;">
     </div>
 
-    <div class="card" style="margin-bottom:16px;">
-      <div class="section-title">🔍 البحث عن مريض</div>
-      <input type="text" id="patientSearchInput" placeholder="ابحث باسم المريض أو رقم الهاتف..." value="${esc(state.patientSearch || "")}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid var(--border,#ccc); font-size:13.5px;">
-    </div>
-
-    ${selected ? renderPatientCard(selected) : renderPatientList(filteredSorted)}
+    ${selected ? renderPatientCard(selected) : (
+      hasQuery
+        // فيه بحث فعّال: النتيجة (القائمة المفلترة) تظهر فورًا أعلى الصفحة مباشرة
+        // تحت شريط البحث، وتحتها مواعيد المتابعة والفلاتر - عشان اللي بيدور عن
+        // مريض بعينه يلاقي النتيجة على طول من غير ما ينزل لتحت.
+        ? `${renderPatientList(filteredSorted)}
+           ${upcomingPanelHTML}
+           ${filtersHTML}`
+        // مفيش بحث شغال (تصفح عادى): الترتيب الافتراضى زي ما هو - المواعيد
+        // القادمة أولًا، بعدين الفلاتر، بعدين القائمة الكاملة.
+        : `${upcomingPanelHTML}
+           ${filtersHTML}
+           ${renderPatientList(filteredSorted)}`
+    )}
   `;
 
-  bindPeriodFilterEvents("patient", granKey, valKey);
+  bindPeriodFilterEvents("patient" + ns, granKey, valKey);
   const statusSelect = document.getElementById("patientStatusSelect");
-  if (statusSelect) statusSelect.addEventListener("change", () => { state.patientStatusFilter = statusSelect.value; state.selectedPatientKey = null; route(); });
+  if (statusSelect) statusSelect.addEventListener("change", () => { state[K("patientStatusFilter")] = statusSelect.value; state[K("selectedPatientKey")] = null; route(); });
 
   const searchInput = document.getElementById("patientSearchInput");
   if (searchInput) searchInput.addEventListener("input", () => {
     // نحافظ على التركيز وموضع المؤشر بعد إعادة الرسم حتى لا تتوقف الكتابة عند أول حرف
     const caret = searchInput.selectionStart;
-    state.patientSearch = searchInput.value; state.selectedPatientKey = null;
+    state[K("patientSearch")] = searchInput.value; state[K("selectedPatientKey")] = null;
     route();
     const newInput = document.getElementById("patientSearchInput");
     if (newInput) { newInput.focus(); newInput.setSelectionRange(caret, caret); }
   });
-  c.querySelectorAll("[data-openpatient]").forEach(b => b.addEventListener("click", () => { state.selectedPatientKey = b.dataset.openpatient; route(); }));
+  c.querySelectorAll("[data-openpatient]").forEach(b => b.addEventListener("click", () => { state[K("selectedPatientKey")] = b.dataset.openpatient; route(); }));
   const backBtn = document.getElementById("backToPatientList");
-  if (backBtn) backBtn.addEventListener("click", () => { state.selectedPatientKey = null; route(); });
+  if (backBtn) backBtn.addEventListener("click", () => { state[K("selectedPatientKey")] = null; route(); });
   c.querySelectorAll("[data-gotovisit]").forEach(b => b.addEventListener("click", () => {
     state.page = b.dataset.kind; state.editId = b.dataset.gotovisit; route();
   }));
-  // إرسال واتساب من مستوى المريض (بطاقة تعريفية عامة، بلا تفاصيل زيارة بعينها)
+  // تحصيل دفعة سريعة على مستحق قديم: بدل ما يُضطر المستخدم يفتح الزيارة القديمة
+  // كاملة للتعديل، أو (الأخطر) يسجّل زيارة جديدة منفصلة ظنًا منه أن هذا يُسقِط
+  // الدين القديم (وهو لا يفعل - كل زيارة رصيدها مستقل تمامًا) - هذا الزر يزيد
+  // المبلغ "المدفوع" على نفس الزيارة القديمة مباشرة، فينخفض "الباقي" فورًا
+  // ويختفي المريض من "مرضى عليهم مستحقات" بمجرد سداد كل زياراته، بلا أي زيارة
+  // وهمية جديدة تُسجَّل فى السجل.
+  c.querySelectorAll("[data-collect]").forEach(b => b.addEventListener("click", async () => {
+    const kindKey = b.dataset.kind;
+    const list = kindKey === "dental" ? DB.visitsDental : DB.visitsClinic;
+    const rec = list.find(v => v.id === b.dataset.collect);
+    if (!rec) return;
+    const remaining = visitRemaining(rec);
+    const input = prompt(`تحصيل دفعة من "${rec.patient || "المريض"}"\nالمبلغ المتبقي على هذه الزيارة: ${fmt(remaining)} ج.م\nادخل المبلغ المُحصَّل الآن:`, fmt(remaining));
+    if (input === null) return;
+    let amount = Number(String(input).replace(/[^\d.]/g, ""));
+    if (!amount || amount <= 0) { showToast("⚠️ ادخل مبلغًا صحيحًا أكبر من صفر"); return; }
+    if (amount > remaining + 0.009) amount = remaining; // لا يمكن تحصيل أكثر من الباقي الفعلي على هذه الزيارة
+    const oldRec = { ...rec };
+    rec.paid = (Number(rec.paid) || 0) + amount;
+    rec.status = visitRemaining(rec) <= 0.009 ? "تم" : "جزئي";
+    logActivity(kindKey === "dental" ? "تحصيل دفعة أسنان" : "تحصيل دفعة عيادات", kindKey, oldRec, rec);
+    syncVisitIncomeLink(rec, kindKey);
+    let pushFailedOnline = false;
+    try {
+      await persist(kindKey === "dental" ? "visitsDental" : "visitsClinic");
+    } catch (err) {
+      console.error("Collect payment sync push failed (saved locally, will retry):", err);
+      pushFailedOnline = true;
+    }
+    if (pushFailedOnline) {
+      showToast(`💾 تم تسجيل التحصيل محليًا — تعذّر رفعه للسحابة الآن وسيُعاد رفعه تلقائيًا عند توفر الاتصال`, 3800);
+    } else {
+      saveToast(`تم تحصيل ${fmt(amount)} ج.م بنجاح`);
+    }
+    route();
+  }));
+  // تحصيل دفعة من "إجمالي المتبقي" على مستوى المريض ككل (مش زيارة بعينها): بيوزّع
+  // المبلغ المُدخَل على زياراته الأقدم فالأحدث (FIFO) - نفس منطق سداد الديون
+  // فى الواقع: تتقفل أقدم زيارة غير مسددة أولًا، ولو زاد المبلغ ينتقل للتالية،
+  // وهكذا حتى ينفد المبلغ أو تُسدَّد كل الزيارات. مفيد جدًا لو المريض عليه أكتر
+  // من زيارة قديمة غير مسددة ومش عايز تدوّر عليهم واحدة واحدة.
+  c.querySelectorAll("[data-collect-total]").forEach(b => b.addEventListener("click", async () => {
+    const g2 = allGroups.find(x => x.key === b.dataset.collectTotal);
+    if (!g2) return;
+    const totalDue = g2.totalDue;
+    const input = prompt(`تحصيل دفعة من "${g2.name || "المريض"}"\nإجمالي المتبقي على كل زياراته: ${fmt(totalDue)} ج.م\nادخل المبلغ المُحصَّل الآن (سيُسدَّد به أقدم الزيارات غير المسددة أولًا):`, fmt(totalDue));
+    if (input === null) return;
+    let amount = Number(String(input).replace(/[^\d.]/g, ""));
+    if (!amount || amount <= 0) { showToast("⚠️ ادخل مبلغًا صحيحًا أكبر من صفر"); return; }
+    if (amount > totalDue + 0.009) amount = totalDue; // لا يمكن تحصيل أكثر من إجمالي المتبقي الفعلي
+    // ترتيب الزيارات غير المسددة من الأقدم للأحدث (بعكس ترتيب العرض المعتاد بالأحدث أولًا)
+    const unpaidOldestFirst = g2.visits.filter(v => visitRemaining(v) > 0.009)
+      .slice().sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.createdAt || "").localeCompare(b.createdAt || ""));
+    let remainingToApply = amount;
+    let visitsSettled = 0;
+    const touchedTables = new Set();
+    for (const v of unpaidOldestFirst) {
+      if (remainingToApply <= 0.009) break;
+      const kindKey = v.kindKey;
+      const list = kindKey === "dental" ? DB.visitsDental : DB.visitsClinic;
+      const rec = list.find(x => x.id === v.id);
+      if (!rec) continue;
+      const remaining = visitRemaining(rec);
+      const applyNow = Math.min(remaining, remainingToApply);
+      const oldRec = { ...rec };
+      rec.paid = (Number(rec.paid) || 0) + applyNow;
+      rec.status = visitRemaining(rec) <= 0.009 ? "تم" : "جزئي";
+      logActivity(kindKey === "dental" ? "تحصيل دفعة أسنان" : "تحصيل دفعة عيادات", kindKey, oldRec, rec);
+      syncVisitIncomeLink(rec, kindKey);
+      touchedTables.add(kindKey === "dental" ? "visitsDental" : "visitsClinic");
+      remainingToApply -= applyNow;
+      if (rec.status === "تم") visitsSettled++;
+    }
+    let pushFailedOnline = false;
+    try {
+      for (const table of touchedTables) await persist(table);
+    } catch (err) {
+      console.error("Collect total payment sync push failed (saved locally, will retry):", err);
+      pushFailedOnline = true;
+    }
+    if (pushFailedOnline) {
+      showToast(`💾 تم تسجيل التحصيل محليًا — تعذّر رفعه للسحابة الآن وسيُعاد رفعه تلقائيًا عند توفر الاتصال`, 3800);
+    } else {
+      saveToast(`تم تحصيل ${fmt(amount)} ج.م بنجاح${visitsSettled ? ` — تم سداد ${visitsSettled} ${visitsSettled === 1 ? "زيارة" : "زيارات"} بالكامل` : ""}`);
+    }
+    route();
+  }));
   c.querySelectorAll("[data-wa-patient]").forEach(b => b.addEventListener("click", () => {
     const g2 = allGroups.find(x => x.key === b.dataset.waPatient);
     if (!g2) return;
@@ -3316,7 +3479,9 @@ function renderOutstandingBalances(kind) {
     </div>
   `;
   c.querySelectorAll("[data-openpatient]").forEach(b => b.addEventListener("click", () => {
-    state.page = "patientFiles"; state.selectedPatientKey = b.dataset.openpatient; route();
+    const targetPage = kind === "أسنان" ? "patientFilesDental" : "patientFilesClinic";
+    const nsKey = kind === "أسنان" ? "selectedPatientKeyDental" : "selectedPatientKeyClinic";
+    state.page = targetPage; state[nsKey] = b.dataset.openpatient; route();
   }));
   c.querySelectorAll("[data-wa-debtor]").forEach(b => b.addEventListener("click", () => {
     const g2 = debtors.find(x => x.key === b.dataset.waDebtor);
