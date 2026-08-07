@@ -1738,7 +1738,7 @@ const SB_CRED_KEY = APP_PREFIX + "supabase_credentials";
 // على أي جهاز أو متصفح دون الحاجة لإدخالها يدويًا فى كل مرة.
 // رقم إصدار النظام - يُحدَّث يدويًا مع كل تعديل حقيقى فى الكود، ليسهل معرفة
 // هل الهاتف شغّال بأحدث نسخة أم لا بمجرد النظر لصفحة الإعدادات، بدل تخمين ذلك.
-const APP_VERSION = "v4.9.17 — تحصيل الدفعة يسجّل الآن زيارة متابعة حقيقية بتاريخ التحصيل فى اليومية (2026-08-07)";
+const APP_VERSION = "v4.9.18 — إصلاح فشل مزامنة زيارة التحصيل بسبب موعد متابعة فارغ (invalid input syntax for type date) (2026-08-07)";
 
 const DEFAULT_SB_URL = "https://qnhotbzzjqayapialnmi.supabase.co";
 const DEFAULT_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuaG90Ynp6anFheWFwaWFsbm1pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwODQ0MzksImV4cCI6MjEwMTY2MDQzOX0.w-gc58ZmwcBBH8vyWF7DtIuxh3UvjnAREABissDscto";
@@ -1763,10 +1763,18 @@ const SB_FIELD_MAPS = {
   auditLog: { id:"id", userId:"user_id", userName:"user_name", action:"action", page:"page", date:"date", time:"time", device:"device", oldValue:"old_value", newValue:"new_value", timestamp:"created_at" },
 };
 
+// أعمدة من النوع date فى قاعدة البيانات - لا تقبل نص فارغ "" (على عكس أعمدة
+// النصوص العادية)، فيجب أن تتحول أي قيمة فارغة فيها إلى null قبل الرفع، وإلا
+// فشلت المزامنة برسالة "invalid input syntax for type date".
+const SB_DATE_COLUMNS = new Set(["date", "next_visit_date"]);
 function sbToRow(key, obj) {
   const map = SB_FIELD_MAPS[key];
   const row = {};
-  for (const [jsField, sqlField] of Object.entries(map)) row[sqlField] = obj[jsField] ?? null;
+  for (const [jsField, sqlField] of Object.entries(map)) {
+    let v = obj[jsField] ?? null;
+    if (v === "" && SB_DATE_COLUMNS.has(sqlField)) v = null;
+    row[sqlField] = v;
+  }
   return row;
 }
 function sbFromRow(key, row) {
@@ -3331,7 +3339,7 @@ function renderPatientFilesPage(kind) {
     const collectionVisit = {
       id: uid(), date: todayISO(), fileNo: rec.fileNo || "", patient: rec.patient, phone: rec.phone,
       doctorId: rec.doctorId, examType: "متابعة", total: amount, paid: amount, status: "تم",
-      notes: `تحصيل دفعة من مستحق زيارة ${rec.date || ""}`, nextVisitDate: "", createdAt: nowISO(),
+      notes: `تحصيل دفعة من مستحق زيارة ${rec.date || ""}`, nextVisitDate: null, createdAt: nowISO(),
     };
     list.push(collectionVisit);
     syncVisitIncomeLink(collectionVisit, kindKey);
@@ -3397,7 +3405,7 @@ function renderPatientFilesPage(kind) {
       const collectionVisit = {
         id: uid(), date: todayISO(), fileNo: g2.fileNos[0] || "", patient: g2.name, phone: g2.phone,
         doctorId: firstTouchedDoctorId, examType: "متابعة", total: amount, paid: amount, status: "تم",
-        notes: `تحصيل دفعة من مستحقات قديمة (بدءًا من زيارة ${firstTouchedDate || ""})`, nextVisitDate: "", createdAt: nowISO(),
+        notes: `تحصيل دفعة من مستحقات قديمة (بدءًا من زيارة ${firstTouchedDate || ""})`, nextVisitDate: null, createdAt: nowISO(),
       };
       collectionList.push(collectionVisit);
       syncVisitIncomeLink(collectionVisit, firstTouchedKindKey);
