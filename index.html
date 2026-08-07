@@ -382,7 +382,7 @@ const PERMISSION_MODULES = [
   ]},
   { key: "settings", label: "الإعدادات العامة", actions: [
     { key: "edit", label: "تعديل الإعدادات" }, { key: "backup", label: "النسخ الاحتياطي" }, { key: "restore", label: "استعادة النسخة الاحتياطية" },
-    { key: "supabaseConnect", label: "الاتصال بـ Supabase" }, { key: "supabaseDisconnect", label: "فصل الاتصال" }, { key: "sync", label: "مزامنة البيانات" },
+    { key: "Connect", label: "الاتصال بـ " }, { key: "supabaseDisconnect", label: "فصل الاتصال" }, { key: "sync", label: "مزامنة البيانات" },
   ]},
   { key: "demoData", label: "البيانات التجريبية للتوضيح", actions: [
     { key: "view", label: "عرض/إدارة (توليد أو مسح)" },
@@ -1740,8 +1740,8 @@ const SB_CRED_KEY = APP_PREFIX + "supabase_credentials";
 // هل الهاتف شغّال بأحدث نسخة أم لا بمجرد النظر لصفحة الإعدادات، بدل تخمين ذلك.
 const APP_VERSION = "v4.9.17 — تحصيل الدفعة يسجّل الآن زيارة متابعة حقيقية بتاريخ التحصيل فى اليومية (2026-08-07)";
 
-const DEFAULT_SB_URL = "https://yxgcxcrjwzpelvkihntj.supabase.co";
-const DEFAULT_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl4Z2N4Y3Jqd3pwZWx2a2lobnRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4ODE3MzcsImV4cCI6MjEwMDQ1NzczN30.EGGIKdvVL6Hb9nbBS5L36TN6A97w_VVVtPESfzsn2vQ";
+const DEFAULT_SB_URL = "https://qnhotbzzjqayapialnmi.supabase.co";
+const DEFAULT_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuaG90Ynp6anFheWFwaWFsbm1pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwODQ0MzksImV4cCI6MjEwMTY2MDQzOX0.w-gc58ZmwcBBH8vyWF7DtIuxh3UvjnAREABissDscto";
 let sbClient = null;
 
 const SB_TABLES = {
