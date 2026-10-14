@@ -1098,7 +1098,7 @@ async function storeGet(key, fallback) {
       // إن كان هناك اتصال ولم تكن المزامنة موقوفة يدويًا ولم يعد الجدول معلّقًا، حاول السحب من Supabase مباشرة
       // ثم احتفظ بنسخة محلية منها. أى فشل أو انقطاع فى الاتصال يرجع فورًا لآخر نسخة محلية محفوظة
       // (Local-First) بدلًا من فقدان البيانات أو الرجوع للبيانات الافتراضية.
-      if (navigator.onLine && !SYNC_PAUSED && !stillPending) {
+      if (navigator.onLine && !SYNC_PAUSED && !stillPending && PENDING_WRITES === 0) {
         try {
           let result;
           if (key === "settings") result = await sbLoadSettings();
@@ -1175,9 +1175,14 @@ async function storeSetInner(key, value) {
         else if (SB_TABLES[key]) {
           const merged = await pushTableSmart(key, value);
           const cleanMerged = (merged || []).filter(r => r && r.id && !isIdDeleted(r.id));
-          DB[key] = cleanMerged;
-          await cacheLocally(key, cleanMerged);
-          await writeSyncBaseline(key, cleanMerged);
+          const currentLocalMap = new Map((DB[key] || []).map(r => [r.id, r]));
+          for (const item of cleanMerged) {
+            currentLocalMap.set(item.id, item);
+          }
+          const finalDbList = Array.from(currentLocalMap.values()).filter(r => r && r.id && !isIdDeleted(r.id));
+          DB[key] = finalDbList;
+          await cacheLocally(key, finalDbList);
+          await writeSyncBaseline(key, finalDbList);
         }
         await unqueueTable(key);
       } catch (e) {
@@ -1676,20 +1681,16 @@ function memoize(fn) {
   };
 }
 async function persist(key) {
-  await stampChangedRecords(key, DB[key]);
-  const map = {
-    doctors: DB.doctors, employees: DB.employees, visitsClinic: DB.visitsClinic,
-    visitsDental: DB.visitsDental, income: DB.income, expense: DB.expense,
-    payroll: DB.payroll, settings: DB.settings, staffAccounts: DB.staffAccounts,
-    categories: DB.categories, specialties: DB.specialties, auditLog: DB.auditLog,
-    labExpenses: DB.labExpenses,
-  };
   PENDING_WRITES++;
   try {
-    // ننتظر اكتمال الحفظ فعليًا (بدل إطلاقه فى الخلفية دون انتظار) حتى تعكس نتيجته
-    // الحقيقة: هل حُفظ محليًا فقط بانتظار المزامنة، أم فشل الحفظ تمامًا؟ هذا يسمح
-    // للشاشات المهمة (الصلاحيات، المستخدمون) بعرض رسالة دقيقة للمستخدم بدل رسالة
-    // "تم الحفظ" التى كانت تظهر فورًا بغض النظر عن نجاح العملية الفعلية من عدمه.
+    await stampChangedRecords(key, DB[key]);
+    const map = {
+      doctors: DB.doctors, employees: DB.employees, visitsClinic: DB.visitsClinic,
+      visitsDental: DB.visitsDental, income: DB.income, expense: DB.expense,
+      payroll: DB.payroll, settings: DB.settings, staffAccounts: DB.staffAccounts,
+      categories: DB.categories, specialties: DB.specialties, auditLog: DB.auditLog,
+      labExpenses: DB.labExpenses,
+    };
     await storeSet(key, map[key]);
   } finally {
     PENDING_WRITES--;
@@ -3858,7 +3859,7 @@ function renderVisitsPage(kind) {
       list.push(rec);
       logActivity(isDental ? "إضافة حالة أسنان" : "إضافة زيارة", kind, null, rec);
     }
-    syncVisitIncomeLink(rec, kind);
+    syncVisitIncomeLink(rec, kind, true);
     // إصلاح جوهري: ننتظر persist() فعليًا هنا (بدل إطلاقها بدون انتظار كما كان
     // سابقًا) قبل استدعاء route(). هذا يضمن أن أى تحديث خلفى آخر (مثلًا
     // backgroundRefreshAll أو سحب فورى بعد التنقل) لا يمكن أبدًا أن يبدأ ويقرأ
@@ -7080,7 +7081,15 @@ function stopIdleTimer() {
 ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "click", "wheel"].forEach(evt => {
   document.addEventListener(evt, () => { if (currentUser) resetIdleTimer(); }, { passive: true });
 });
-document.addEventListener("visibilitychange", () => { if (!document.hidden && currentUser) resetIdleTimer(); });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && currentUser) {
+    resetIdleTimer();
+    if (STORAGE_MODE === "supabase" && navigator.onLine) {
+      if (!universalRealtimeChannel) subscribeUniversalRealtime();
+      backgroundRefreshAll();
+    }
+  }
+});
 
 // ======================================================================
 // التشغيل
@@ -7220,6 +7229,10 @@ function subscribeUniversalRealtime() {
     universalRealtimeChannel = channel.subscribe((status, err) => {
       if (err) console.warn("Universal Realtime channel error:", err);
       else console.log("Universal Realtime status:", status);
+      if (status === "CHANNEL_ERROR" || status === "CLOSED" || status === "TIMED_OUT") {
+        try { if (sbClient) sbClient.removeChannel(channel); } catch (e) {}
+        universalRealtimeChannel = null;
+      }
     });
   } catch (e) {
     console.error("Universal Realtime subscribe failed:", e);
