@@ -3867,7 +3867,10 @@ function renderVisitsPage(kind) {
     // > 0 طوال مدة هذا الانتظار، وهو ما يحمى منه backgroundRefreshAll أعلاه أيضًا.
     let pushFailedOnline = false;
     try {
-      await persist(isDental ? "visitsDental" : "visitsClinic");
+      await Promise.all([
+        persist(isDental ? "visitsDental" : "visitsClinic"),
+        persist("income")
+      ]);
     } catch (err) {
       // فشل الرفع الفورى للسحابة رغم وجود اتصال (خطأ شبكة عابر، رفض من الخادم...).
       // البيانات محفوظة محليًا بالفعل وأُضيفت لطابور إعادة المحاولة التلقائية
@@ -7100,120 +7103,124 @@ const SQL_TABLE_TO_DB_KEY = {
 };
 
 let universalRealtimeChannel = null;
+async function handleUniversalRealtimePayload(payload, dbKey) {
+  if (!payload || !dbKey) return;
+  const event = payload.eventType; // "INSERT", "UPDATE", "DELETE"
+  
+  // 1) حذف لحظي فوري (DELETE)
+  if (event === "DELETE") {
+    const delId = payload.old && payload.old.id;
+    if (!delId) return;
+    markIdAsDeleted(delId);
+    if (Array.isArray(DB[dbKey])) {
+      const beforeLen = DB[dbKey].length;
+      DB[dbKey] = DB[dbKey].filter(r => r && r.id !== delId && !isIdDeleted(r.id));
+      if (DB[dbKey].length !== beforeLen) {
+        await cacheLocally(dbKey, DB[dbKey]);
+        const base = await readSyncBaseline(dbKey);
+        if (Array.isArray(base)) {
+          await writeSyncBaseline(dbKey, base.filter(r => r && r.id !== delId && !isIdDeleted(r.id)));
+        }
+        DATA_VERSION++;
+        if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
+          route();
+        }
+      }
+    }
+    return;
+  }
+
+  // 2) إضافة لحظية فورية (INSERT)
+  if (event === "INSERT") {
+    const rawRow = payload.new;
+    if (!rawRow || !rawRow.id || isIdDeleted(rawRow.id)) return;
+    const item = sbFromRow(dbKey, rawRow);
+    if (!item || !item.id || isIdDeleted(item.id)) return;
+
+    if (dbKey === "auditLog") {
+      AUDIT_UPLOADED_IDS.add(item.id);
+      const currentYm = (typeof state !== "undefined" && state.auditLogMonth) || todayISO().slice(0, 7);
+      const recYm = (item.date || "").slice(0, 7);
+      if (recYm === currentYm) {
+        DB.auditLog = DB.auditLog || [];
+        if (!DB.auditLog.some(r => r.id === item.id)) {
+          DB.auditLog.unshift(item);
+          if (DB.auditLog.length > MAX_AUDIT_ENTRIES) DB.auditLog.length = MAX_AUDIT_ENTRIES;
+          await cacheLocally("auditLog", DB.auditLog);
+          if (state.page === "auditlog" && !isMidEdit() && !isUserActivelyTyping()) route();
+        }
+      }
+      return;
+    }
+
+    if (Array.isArray(DB[dbKey])) {
+      const exists = DB[dbKey].some(r => r && r.id === item.id);
+      if (!exists) {
+        DB[dbKey].push(item);
+        await cacheLocally(dbKey, DB[dbKey]);
+        const base = await readSyncBaseline(dbKey);
+        if (Array.isArray(base)) {
+          await writeSyncBaseline(dbKey, [...base, item]);
+        }
+        DATA_VERSION++;
+        if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
+          route();
+        }
+      }
+    }
+    return;
+  }
+
+  // 3) تعديل لحظي فوري (UPDATE)
+  if (event === "UPDATE") {
+    const rawRow = payload.new;
+    if (!rawRow || !rawRow.id || isIdDeleted(rawRow.id)) return;
+    const item = sbFromRow(dbKey, rawRow);
+    if (!item || !item.id || isIdDeleted(item.id)) return;
+
+    if (dbKey === "staffAccounts" && currentUser) {
+      if (item.id === currentUser.id && item.status === "موقوف") {
+        clearSession();
+        renderLogin("تم إيقاف هذا الحساب أو حذفه.");
+        return;
+      }
+    }
+
+    if (Array.isArray(DB[dbKey])) {
+      const idx = DB[dbKey].findIndex(r => r && r.id === item.id);
+      if (idx > -1) {
+        if (state.editId === item.id || state.editDocId === item.id || state.editUserId === item.id || state.editEmpId === item.id) return;
+        DB[dbKey][idx] = Object.assign({}, DB[dbKey][idx], item);
+        await cacheLocally(dbKey, DB[dbKey]);
+        const base = await readSyncBaseline(dbKey);
+        if (Array.isArray(base)) {
+          const bIdx = base.findIndex(r => r && r.id === item.id);
+          if (bIdx > -1) base[bIdx] = item; else base.push(item);
+          await writeSyncBaseline(dbKey, base);
+        }
+        DATA_VERSION++;
+        if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
+          route();
+        }
+      }
+    }
+    return;
+  }
+}
+
 function subscribeUniversalRealtime() {
   if (!sbClient || STORAGE_MODE !== "supabase" || universalRealtimeChannel) return;
   try {
-    universalRealtimeChannel = sbClient
-      .channel("unified_clinic_live")
-      .on("postgres_changes", { event: "*", schema: "public" }, async (payload) => {
-        if (!payload || !payload.table) return;
-        const dbKey = SQL_TABLE_TO_DB_KEY[payload.table];
-        if (!dbKey) return;
-        const event = payload.eventType; // "INSERT", "UPDATE", "DELETE"
-        
-        // 1) حذف لحظي فوري (DELETE)
-        if (event === "DELETE") {
-          const delId = payload.old && payload.old.id;
-          if (!delId) return;
-          markIdAsDeleted(delId);
-          if (Array.isArray(DB[dbKey])) {
-            const beforeLen = DB[dbKey].length;
-            DB[dbKey] = DB[dbKey].filter(r => r && r.id !== delId && !isIdDeleted(r.id));
-            if (DB[dbKey].length !== beforeLen) {
-              await cacheLocally(dbKey, DB[dbKey]);
-              const base = await readSyncBaseline(dbKey);
-              if (Array.isArray(base)) {
-                await writeSyncBaseline(dbKey, base.filter(r => r && r.id !== delId && !isIdDeleted(r.id)));
-              }
-              DATA_VERSION++;
-              if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
-                route();
-              }
-            }
-          }
-          return;
-        }
-
-        // 2) إضافة لحظية فورية (INSERT)
-        if (event === "INSERT") {
-          const rawRow = payload.new;
-          if (!rawRow || !rawRow.id || isIdDeleted(rawRow.id)) return;
-          const item = sbFromRow(dbKey, rawRow);
-          if (!item || !item.id || isIdDeleted(item.id)) return;
-
-          if (dbKey === "auditLog") {
-            AUDIT_UPLOADED_IDS.add(item.id);
-            const currentYm = (typeof state !== "undefined" && state.auditLogMonth) || todayISO().slice(0, 7);
-            const recYm = (item.date || "").slice(0, 7);
-            if (recYm === currentYm) {
-              DB.auditLog = DB.auditLog || [];
-              if (!DB.auditLog.some(r => r.id === item.id)) {
-                DB.auditLog.unshift(item);
-                if (DB.auditLog.length > MAX_AUDIT_ENTRIES) DB.auditLog.length = MAX_AUDIT_ENTRIES;
-                await cacheLocally("auditLog", DB.auditLog);
-                if (state.page === "auditlog" && !isMidEdit() && !isUserActivelyTyping()) route();
-              }
-            }
-            return;
-          }
-
-          if (Array.isArray(DB[dbKey])) {
-            const exists = DB[dbKey].some(r => r && r.id === item.id);
-            if (!exists) {
-              DB[dbKey].push(item);
-              await cacheLocally(dbKey, DB[dbKey]);
-              const base = await readSyncBaseline(dbKey);
-              if (Array.isArray(base)) {
-                await writeSyncBaseline(dbKey, [...base, item]);
-              }
-              DATA_VERSION++;
-              if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
-                route();
-              }
-            }
-          }
-          return;
-        }
-
-        // 3) تعديل لحظي فوري (UPDATE)
-        if (event === "UPDATE") {
-          const rawRow = payload.new;
-          if (!rawRow || !rawRow.id || isIdDeleted(rawRow.id)) return;
-          const item = sbFromRow(dbKey, rawRow);
-          if (!item || !item.id || isIdDeleted(item.id)) return;
-
-          if (dbKey === "staffAccounts" && currentUser) {
-            if (item.id === currentUser.id && item.status === "موقوف") {
-              clearSession();
-              renderLogin("تم إيقاف هذا الحساب أو حذفه.");
-              return;
-            }
-          }
-
-          if (Array.isArray(DB[dbKey])) {
-            const idx = DB[dbKey].findIndex(r => r && r.id === item.id);
-            if (idx > -1) {
-              if (state.editId === item.id || state.editDocId === item.id || state.editUserId === item.id || state.editEmpId === item.id) return;
-              DB[dbKey][idx] = Object.assign({}, DB[dbKey][idx], item);
-              await cacheLocally(dbKey, DB[dbKey]);
-              const base = await readSyncBaseline(dbKey);
-              if (Array.isArray(base)) {
-                const bIdx = base.findIndex(r => r && r.id === item.id);
-                if (bIdx > -1) base[bIdx] = item; else base.push(item);
-                await writeSyncBaseline(dbKey, base);
-              }
-              DATA_VERSION++;
-              if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
-                route();
-              }
-            }
-          }
-          return;
-        }
-      })
-      .subscribe((status, err) => {
-        if (err) console.warn("Universal Realtime channel error:", err);
+    let channel = sbClient.channel("unified_clinic_live_v2");
+    for (const [tbl, dbKey] of Object.entries(SQL_TABLE_TO_DB_KEY)) {
+      channel = channel.on("postgres_changes", { event: "*", schema: "public", table: tbl }, async (payload) => {
+        handleUniversalRealtimePayload(payload, dbKey);
       });
+    }
+    universalRealtimeChannel = channel.subscribe((status, err) => {
+      if (err) console.warn("Universal Realtime channel error:", err);
+      else console.log("Universal Realtime status:", status);
+    });
   } catch (e) {
     console.error("Universal Realtime subscribe failed:", e);
     universalRealtimeChannel = null;
