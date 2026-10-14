@@ -1073,6 +1073,21 @@ async function detectStorageMode() {
 }
 
 
+// يزداد الإصدار مع كل تعديل محلي. لا يجوز لطلب شبكة بدأ قبل ذلك التعديل
+// أن يكتب نتيجته القديمة في الكاش أو في DB بعد اكتمال التعديل.
+const TABLE_SYNC_GENERATIONS = Object.create(null);
+function getTableSyncGeneration(key) { return TABLE_SYNC_GENERATIONS[key] || 0; }
+function markTableLocallyChanged(key) {
+  TABLE_SYNC_GENERATIONS[key] = getTableSyncGeneration(key) + 1;
+  return TABLE_SYNC_GENERATIONS[key];
+}
+function snapshotForSync(value) {
+  // بيانات التطبيق JSON-serializable؛ اللقطة تمنع تعديل المصفوفة نفسها
+  // أثناء انتظار دورها في STORE_SET_QUEUES.
+  if (typeof structuredClone === "function") return structuredClone(value);
+  return value === undefined ? value : JSON.parse(JSON.stringify(value));
+}
+
 async function storeGet(key, fallback) {
   try {
     if (STORAGE_MODE === "supabase") {
@@ -1098,6 +1113,7 @@ async function storeGet(key, fallback) {
       // إن كان هناك اتصال ولم تكن المزامنة موقوفة يدويًا ولم يعد الجدول معلّقًا، حاول السحب من Supabase مباشرة
       // ثم احتفظ بنسخة محلية منها. أى فشل أو انقطاع فى الاتصال يرجع فورًا لآخر نسخة محلية محفوظة
       // (Local-First) بدلًا من فقدان البيانات أو الرجوع للبيانات الافتراضية.
+      const generationBeforeRemoteRead = getTableSyncGeneration(key);
       if (navigator.onLine && !SYNC_PAUSED && !stillPending && PENDING_WRITES === 0) {
         try {
           let result;
@@ -1107,6 +1123,12 @@ async function storeGet(key, fallback) {
           else if (key === "auditLog") result = await loadAuditLogMonth((typeof state !== "undefined" && state.auditLogMonth) || todayISO().slice(0, 7));
           else if (SB_TABLES[key]) result = await sbLoadTable(key);
           if (result != null) {
+            // قد يكون المستخدم حفظ أثناء await أعلاه؛ لا تُطمس نسخته بقراءة
+            // سحابية بدأت قبل الحفظ، حتى لو كان الطلب نفسه ناجحًا.
+            if (getTableSyncGeneration(key) !== generationBeforeRemoteRead || PENDING_WRITES > 0) {
+              const current = await readLocalCache(key, fallback);
+              return Array.isArray(current) ? current.filter(r => r && r.id && !isIdDeleted(r.id)) : current;
+            }
             const delQueue = await getDeletedQueue(key);
             const delSet = new Set(delQueue);
             if (Array.isArray(result)) {
@@ -1151,8 +1173,9 @@ async function storeGet(key, fallback) {
 // ويبقى ترتيب الكتابة النهائية مطابقًا لترتيب الحفظ الفعلى دايمًا.
 const STORE_SET_QUEUES = {};
 function storeSet(key, value) {
+  const snapshot = snapshotForSync(value);
   const prev = STORE_SET_QUEUES[key] || Promise.resolve();
-  const run = prev.catch(() => {}).then(() => storeSetInner(key, value));
+  const run = prev.catch(() => {}).then(() => storeSetInner(key, snapshot));
   STORE_SET_QUEUES[key] = run;
   return run;
 }
@@ -1173,16 +1196,26 @@ async function storeSetInner(key, value) {
         else if (key === "specialties") await sbSaveSpecialties(value);
         else if (key === "auditLog") await sbSaveAuditLog(value);
         else if (SB_TABLES[key]) {
+          const generationAtPushStart = getTableSyncGeneration(key);
           const merged = await pushTableSmart(key, value);
           const cleanMerged = (merged || []).filter(r => r && r.id && !isIdDeleted(r.id));
           const currentLocalMap = new Map((DB[key] || []).map(r => [r.id, r]));
+          const submittedMap = new Map((value || []).map(r => [r.id, r]));
           for (const item of cleanMerged) {
-            currentLocalMap.set(item.id, item);
+            const current = currentLocalMap.get(item.id);
+            const submitted = submittedMap.get(item.id);
+            // إذا تغيّر نفس السجل بعد بدء الطلب، فـ DB هو الأحدث. نضيف السجلات
+            // البعيدة الجديدة فقط ولا نستبدل تعديل المستخدم اللاحق.
+            if (!current || getTableSyncGeneration(key) === generationAtPushStart || recordsEqual(current, submitted)) {
+              currentLocalMap.set(item.id, item);
+            }
           }
           const finalDbList = Array.from(currentLocalMap.values()).filter(r => r && r.id && !isIdDeleted(r.id));
           DB[key] = finalDbList;
           await cacheLocally(key, finalDbList);
-          await writeSyncBaseline(key, finalDbList);
+          // خط الأساس يجب أن يعكس فقط ما أكده هذا الطلب، لا ما أُضيف محليًا
+          // أثناء انتظاره؛ وإلا قد تُعامل الإضافة الحديثة خطأً كأنها وصلت للسحابة.
+          await writeSyncBaseline(key, cleanMerged);
         }
         await unqueueTable(key);
       } catch (e) {
@@ -1682,6 +1715,7 @@ function memoize(fn) {
 }
 async function persist(key) {
   PENDING_WRITES++;
+  markTableLocallyChanged(key);
   try {
     await stampChangedRecords(key, DB[key]);
     const map = {
@@ -2495,16 +2529,8 @@ async function pushTableSmart(key, localArr) {
     if (isIdDeleted(delId)) toDeleteSet.add(delId);
   }
 
-  // 2) مقارنة خط الأساس مع النسخة المحلية: إن كان السجل معروفًا مسبقًا وغاب عن النسخة المحلية وما زال بالسحابة
-  for (const base of (baseline || [])) {
-    if (isIdDeleted(base.id)) {
-      toDeleteSet.add(base.id);
-      continue;
-    }
-    if (!localMap.has(base.id) && remoteMap.has(base.id)) {
-      toDeleteSet.add(base.id);
-    }
-  }
+  // 2) لا نستنتج الحذف من غياب سجل في لقطة محلية. الحذف الوحيد المسموح
+  // هو طابور الحذف/شاهد الحذف الصريح؛ اللقطة قد تكون قديمة أو متأثرة بطلب سابق.
 
   // 3) معالجة السجلات المحلية
   for (const local of (localArr || [])) {
@@ -2550,12 +2576,8 @@ async function pushTableSmart(key, localArr) {
       continue; // محذوف - استبعده فورًا من الإضافة للنسخة المدمجة
     }
     if (!localMap.has(remote.id)) {
-      // إن كان معروفًا محليًا فى خط الأساس ولم يعد موجودًا فى localMap، فهذا الجهاز هو من حذفه
-      if (baseMap.has(remote.id)) {
-        toDeleteSet.add(remote.id);
-        continue; // لا تُعِده للمدمج أبدًا
-      }
-      // سجل جديد تمامًا أضافه جهاز آخر -> أضِفه للنسخة المحلية
+      // لا تحول الغياب المحلي إلى حذف سحابي. قد تكون لقطة الإرسال أقدم من
+      // وصول INSERT/UPDATE آخر، لذلك نحتفظ دائمًا بالسجل البعيد غير المحذوف صراحة.
       mergedLocal.push(remote);
     }
   }
@@ -7194,6 +7216,10 @@ async function handleUniversalRealtimePayload(payload, dbKey) {
       const idx = DB[dbKey].findIndex(r => r && r.id === item.id);
       if (idx > -1) {
         if (state.editId === item.id || state.editDocId === item.id || state.editUserId === item.id || state.editEmpId === item.id) return;
+        const local = DB[dbKey][idx];
+        // قد يصل حدث UPDATE المتولد عن رفع سابق بعد أن عدّل المستخدم السجل
+        // مرة أخرى. لا يسمح للحدث الأقدم بالرجوع بالذاكرة إلى الوراء.
+        if ((local.updatedAt || "") > (item.updatedAt || "")) return;
         DB[dbKey][idx] = Object.assign({}, DB[dbKey][idx], item);
         await cacheLocally(dbKey, DB[dbKey]);
         const base = await readSyncBaseline(dbKey);
