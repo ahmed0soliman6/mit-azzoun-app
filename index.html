@@ -1126,7 +1126,10 @@ async function storeGet(key, fallback) {
             // قد يكون المستخدم حفظ أثناء await أعلاه؛ لا تُطمس نسخته بقراءة
             // سحابية بدأت قبل الحفظ، حتى لو كان الطلب نفسه ناجحًا.
             if (getTableSyncGeneration(key) !== generationBeforeRemoteRead || PENDING_WRITES > 0) {
-              const current = await readLocalCache(key, fallback);
+              // DB يتغيّر قبل أول await في مسار الإضافة، بينما IndexedDB لا
+              // تُحدَّث إلا لاحقًا. لذلك نفضّل الذاكرة هنا؛ الرجوع للكاش في
+              // هذه اللحظة يعيد لقطة قديمة ويجعل الزيارة تختفي مؤقتًا.
+              const current = DB[key] !== undefined ? DB[key] : await readLocalCache(key, fallback);
               return Array.isArray(current) ? current.filter(r => r && r.id && !isIdDeleted(r.id)) : current;
             }
             const delQueue = await getDeletedQueue(key);
@@ -2921,7 +2924,10 @@ async function backgroundRefreshAll() {
       if (PENDING_WRITES > 0) break; // بدأت عملية حفظ جديدة أثناء السحب نفسه - توقف فورًا ولا تكمل باقى الجداول
       try {
         const before = JSON.stringify(DB[key]);
+        const generationBeforeRefresh = getTableSyncGeneration(key);
         const fresh = await storeGet(key, DB[key]);
+        // لا تطبّق نتيجة طلب بدأ قبل تعديل محلي، حتى لو انتهى بعده.
+        if (getTableSyncGeneration(key) !== generationBeforeRefresh) continue;
         if (fresh !== undefined && JSON.stringify(fresh) !== before) { DB[key] = fresh; changed = true; }
       } catch (e) { /* تجاهل فشل جدول واحد ولا يوقف تحديث الباقى */ }
     }
@@ -4653,15 +4659,14 @@ function renderMoneyPage(kind) {
     const idx = list.findIndex(v => v.id === delId);
     const removed = idx > -1 ? list[idx] : null;
     if (idx > -1) list.splice(idx, 1);
-    // إصلاح: حذف قيد وارد/منصرف من هذه الصفحة مباشرة (بدل حذف الزيارة أو المرتب
-    // أو مصروف المعمل المصدر) كان يترك السجل المصدر بمرجع "linkedIncomeId" أو
-    // "linkedExpenseId" معلّقًا يشير لقيد محذوف - فيختفي المبلغ من الخزينة بصمت
-    // حتى تُعدَّل الزيارة/المرتب مرة أخرى (وقتها فقط يُعاد إنشاء القيد تلقائيًا).
-    // الآن يُمسَح المرجع فورًا فى المصدر عند الحذف المباشر، فتبقى حالة الربط متسقة.
+    // الوارد الناتج عن زيارة يمثل نفس العملية، لذلك الحذف من صفحة الوارد
+    // يحذف الزيارة المرتبطة أيضًا (في العيادات أو الأسنان) وليس المرجع فقط.
     if (removed) {
       if (isIncome) {
-        DB.visitsClinic.forEach(v => { if (v.linkedIncomeId === removed.id) v.linkedIncomeId = null; });
-        DB.visitsDental.forEach(v => { if (v.linkedIncomeId === removed.id) v.linkedIncomeId = null; });
+        const clinicVisitIds = (DB.visitsClinic || []).filter(v => v && v.linkedIncomeId === removed.id).map(v => v.id);
+        const dentalVisitIds = (DB.visitsDental || []).filter(v => v && v.linkedIncomeId === removed.id).map(v => v.id);
+        for (const visitId of clinicVisitIds) await executeRecordDeletion("visitsClinic", visitId);
+        for (const visitId of dentalVisitIds) await executeRecordDeletion("visitsDental", visitId);
       } else {
         DB.payroll.forEach(p => { if (p.linkedExpenseId === removed.id) p.linkedExpenseId = null; });
         DB.labExpenses.forEach(l => { if (l.linkedExpenseId === removed.id) l.linkedExpenseId = null; });
@@ -4672,7 +4677,7 @@ function renderMoneyPage(kind) {
     await executeRecordDeletion(isIncome ? "income" : "expense", delId);
     logActivity(isIncome ? "حذف عملية وارد" : "حذف عملية منصرف", kind, removed, null);
     await persist(isIncome ? "income" : "expense");
-    if (removed) { persist("visitsClinic"); persist("visitsDental"); persist("payroll"); persist("labExpenses"); }
+    if (removed && !isIncome) { persist("payroll"); persist("labExpenses"); }
   }));
 }
 
