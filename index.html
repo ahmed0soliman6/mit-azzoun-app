@@ -1121,6 +1121,8 @@ async function mergeRemoteSnapshot(key, remoteRows) {
   const cached = await readLocalCache(key, []);
   const localRows = Array.isArray(DB[key]) && DB[key].length ? DB[key] : (Array.isArray(cached) ? cached : []);
   const pending = pendingRecordsFor(key);
+  const baseline = await readSyncBaseline(key);
+  const baselineMap = new Map((baseline || []).filter(r => r && r.id).map(r => [r.id, r]));
   const remoteMap = new Map(remoteRows.filter(r => r && r.id).map(r => [r.id, r]));
   const mergedMap = new Map();
 
@@ -1128,8 +1130,15 @@ async function mergeRemoteSnapshot(key, remoteRows) {
     if (!local || !local.id || isIdDeleted(local.id)) continue;
     const remote = remoteMap.get(local.id);
     if (!remote) {
-      // غياب السجل في أي لقطة ليس دليل حذف. الحذف فقط عبر tombstone/DELETE.
-      mergedMap.set(local.id, local);
+      // السجل غير المؤكد محليًا لا يُحذف لمجرد غيابه من لقطة قديمة.
+      if (pending.has(local.id)) {
+        mergedMap.set(local.id, local);
+      } else if (!baselineMap.has(local.id)) {
+        // سجل محلي لا نعرف إن كان وصل للخادم أصلًا؛ احتفظ به احتياطيًا.
+        mergedMap.set(local.id, local);
+      }
+      // أما السجل المؤكد في الـ baseline ثم اختفى من لقطة كاملة، فهو حذف
+      // خادمي حقيقي من جهاز آخر ويجب أن يختفي محليًا أيضًا.
       continue;
     }
     if (pending.has(local.id)) {
@@ -2675,7 +2684,9 @@ async function pushTableSmart(key, localArr) {
   if (toDelete.length) {
     for (const batch of chunkArray(toDelete, CHUNK)) {
       const { error: delErr } = await sbClient.from(table).delete().in("id", batch);
-      if (delErr) console.warn("Supabase delete in pushTableSmart error:", delErr);
+      // لا تمسح طابور الحذف عند الفشل؛ وإلا يختفي السجل محليًا فقط ويبقى
+      // موجودًا عند كل الأجهزة الأخرى إلى الأبد.
+      if (delErr) throw delErr;
     }
     await clearDeletedQueue(key, toDelete);
   }
