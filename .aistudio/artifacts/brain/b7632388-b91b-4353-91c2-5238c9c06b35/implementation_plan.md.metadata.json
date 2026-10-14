@@ -1,6 +1,6 @@
 {
-  "summary": "Comprehensive plan to fix staff performance tracking and conduct a full multi-module audit across Mit Azzoun Medical Center system. Solves the issue where employee collection numbers appear as zero or disappear due to missing creator metadata on visit income links and aggressive table filtering. Adds an unassigned historical records row, credits both patient visit collections and direct income receipts to employees, and audits visit fees, patient debt records, cash ledger reconciliation, and payroll doctor share synchronization.",
-  "updatedAt": "2026-10-14T13:12:44.185508722Z",
+  "summary": "خطة عمل شاملة لعلاج مشكلة عودة السجلات المحذوفة والمزامنة الفورية عبر الأجهزة بين الموبايل والكمبيوتر (Realtime)، وضمان تسجيل وحفظ وتعديل وحذف كل من اليوميات والوارد والمنصرف محلياً وسحابياً دون فقدان أو تعارض.",
+  "updatedAt": "2026-10-14T17:43:31.357971268Z",
   "requestFeedback": true,
   "userFacing": true
 }

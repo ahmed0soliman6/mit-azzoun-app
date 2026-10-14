@@ -150,6 +150,18 @@
     #topbar .pill{ display:none; }
     #topbar .btn.sm{ padding:5px 8px; font-size:11.5px; }
   }
+  @media (max-width:640px){
+    #topbar{ padding:8px 10px; gap:6px; }
+    #topbar .title{ font-size:14px; max-width:130px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  }
+  @media (max-width:390px){
+    #topbar{ padding:7px 8px; gap:4px; }
+    #topbar .title{ font-size:13px; max-width:90px; }
+    #hamburgerBtn{ width:34px !important; height:34px !important; }
+    #connectionStatusBtn{ padding:4px 6px !important; font-size:11px !important; gap:4px !important; }
+    #notifBellBtn{ padding:4px 7px !important; font-size:13px !important; }
+    #themeToggleBtn{ padding:4px 7px !important; font-size:13px !important; }
+  }
   #notifPanel {
     display:none; position:absolute; top:calc(100% + 8px); left:0; width:330px; max-width:92vw;
     background:var(--card); border:1.5px solid var(--border,var(--line)); border-radius:12px;
@@ -162,9 +174,10 @@
     }
   }
   .notif-item:hover{background:var(--row-hover) !important;}
+  .patient-suggest-item:hover{background:var(--row-hover) !important;}
   @keyframes pulseLogo{0%,100%{transform:scale(1); filter:drop-shadow(0 4px 12px rgba(16,42,53,.15));} 50%{transform:scale(1.05); filter:drop-shadow(0 8px 24px rgba(15,102,116,.3));}}
   @keyframes spin{to{transform:rotate(360deg);}}
-  #content{padding:22px 26px 60px; flex:1;}
+  #content{padding:22px 26px 60px; flex:1; max-width:100%; box-sizing:border-box;}
 
   /* ---------- Cards / grid ---------- */
   .grid{display:grid; gap:16px;}
@@ -172,26 +185,18 @@
   .grid-3{grid-template-columns:repeat(3,1fr);}
   .grid-2{grid-template-columns:repeat(2,1fr);}
   @media (max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr);} .grid-3{grid-template-columns:repeat(2,1fr);}}
-  /* إصلاح تنسيق: عمود واحد بعرض الشاشة الكامل كان يخلّي كل صندوق KPI يبان
-     كمستطيل طويل وفاضي (عرض كامل، محتوى قليل) بدل شكل مربّع مضغوط يلائم
-     محتواه. الحل: عمودان دايمًا على الموبايل (صندوق أقرب للمربع)، مع تصغير
-     الخط والحشو شوية عشان العناوين الطويلة تتلائم بدون ما تحتاج عرض كامل.
-     كل صندوق كمان بقى بحدود أوضح (ظل وحدود أقوى شوية) عشان يبقى متمايز
-     بصريًا عن جاره بدل ما يبانوا متلاصقين. */
   @media (max-width:560px){
     .grid-4, .grid-3, .grid-2{grid-template-columns:repeat(2,1fr); gap:10px;}
-    .card.kpi{padding:12px; box-shadow:0 1px 3px rgba(16,42,53,.08), 0 2px 8px -4px rgba(16,42,53,.22); border-width:1.5px;}
+    .card.kpi{padding:12px 10px; box-shadow:0 1px 3px rgba(16,42,53,.08), 0 2px 8px -4px rgba(16,42,53,.22); border-width:1.5px;}
     .kpi .label{font-size:11px; margin-bottom:6px; line-height:1.3;}
-    .kpi .value{font-size:18px;}
-    .kpi.hero .value{font-size:22px;}
+    .kpi .value{font-size:clamp(16px, 4.5vw, 20px); word-break:break-word;}
+    .kpi.hero .value{font-size:clamp(18px, 5vw, 24px);}
   }
 
   .card{
     background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
-    padding:18px; box-shadow:var(--shadow);
+    padding:18px; box-shadow:var(--shadow); max-width:100%; box-sizing:border-box;
   }
-  /* الصناديق (KPI) بقت بحدود وظل أوضح شوية من الكروت العادية، عشان تتميّز
-     بصريًا كأرقام مهمة يقع عليها النظر بسرعة بدل ما تنسحب فى خلفية الصفحة. */
   .card.kpi{border-color:var(--border,var(--line)); box-shadow:0 1px 2px rgba(16,42,53,.05), 0 4px 14px -8px rgba(16,42,53,.25);}
   .kpi .label{font-size:12px; color:var(--muted); font-weight:600; margin-bottom:8px;}
   .kpi .value{font-family:'Tajawal'; font-weight:900; font-size:24px; color:var(--navy);}
@@ -209,29 +214,243 @@
     background:radial-gradient(circle, rgba(255,255,255,.14), transparent 70%);
   }
 
-  .section-title{font-family:'Tajawal'; font-weight:700; font-size:15.5px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between;}
+  .section-title{font-family:'Tajawal'; font-weight:700; font-size:15.5px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;}
   .section-title .hint{font-size:11.5px; color:var(--muted); font-weight:500;}
 
-  /* ---------- Forms ---------- */
+  /* ---------- Forms Responsive Architecture ---------- */
   .form-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
-  @media (max-width:900px){.form-grid{grid-template-columns:repeat(2,1fr);}}
-  /* نموذج تسجيل الزيارة تحديدًا: 3 أعمدة ثابتة فى كل المقاسات (حتى على الهاتف)
-     لإعطاء شكل متسق فى 4 صفوف بدل تغيّر عدد الأعمدة حسب عرض الشاشة. */
-  .visit-grid-3{grid-template-columns:repeat(3,1fr) !important;}
-  @media (max-width:480px){.visit-grid-3{gap:8px;}}
+  .field{min-width:0; position:relative;}
   .field label{display:block; font-size:12px; font-weight:700; color:var(--navy); margin-bottom:5px;}
   .field input, .field select, .field textarea{
-    width:100%; padding:9px 11px; border:1.5px solid var(--line); border-radius:9px;
+    width:100%; max-width:100%; box-sizing:border-box; padding:9px 11px; border:1.5px solid var(--line); border-radius:9px;
     font-family:'Cairo'; font-size:13.5px; background:var(--input-bg); color:var(--ink);
     transition:border-color .15s;
   }
   .field input:focus, .field select:focus, .field textarea:focus{
     outline:none; border-color:var(--teal); background:var(--card);
   }
-  /* تمييز كل الخانات الإلزامية (required) تلقائيًا فى كل نماذج النظام بلون مميز
-     (ذهبى) + علامة نجمية بجانب اسم الحقل، بدل الاعتماد على تخمين المستخدم لأي
-     الحقول لازم تُملأ قبل الحفظ. لا حاجة لتعديل كل نموذج يدويًا - يعمل تلقائيًا
-     على أي input/select يحمل خاصية required. */
+
+  /* ========== تصميم نموذج تسجيل الزيارات (5 صفوف أفقية مخصصة لجميع الشاشات) ========== */
+  .visit-form-custom{
+    display:flex !important;
+    flex-direction:column !important;
+    gap:10px !important;
+    width:100% !important;
+  }
+  .visit-form-custom .visit-row{
+    display:flex !important;
+    flex-direction:row !important;
+    align-items:flex-end !important;
+    gap:8px !important;
+    width:100% !important;
+  }
+  .visit-form-custom .field{
+    min-width:0 !important;
+    display:flex !important;
+    flex-direction:column !important;
+    position:relative;
+  }
+  .visit-form-custom .field label{
+    display:block;
+    font-size:11.5px;
+    font-weight:700;
+    color:var(--navy);
+    margin-bottom:4px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .visit-form-custom .field input,
+  .visit-form-custom .field select{
+    width:100% !important;
+    max-width:100% !important;
+    box-sizing:border-box !important;
+    padding:8px 9px;
+    font-size:13px;
+    min-height:40px;
+    height:40px;
+    border-radius:9px;
+  }
+
+  /* الصف الأول: التاريخ بحجم صغير واسم المريض أكثر من ثلاث أرباع الصف */
+  .visit-form-custom .visit-row-1 .field-date{
+    flex:0 0 120px !important;
+    max-width:24% !important;
+  }
+  .visit-form-custom .visit-row-1 .field-date input{
+    padding:6px 4px !important;
+    font-size:12px !important;
+    text-align:center;
+  }
+  .visit-form-custom .visit-row-1 .field-patient{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+    position:relative;
+  }
+
+  /* الصف الثاني: رقم الهاتف أكبر من خانة الطبيب */
+  .visit-form-custom .visit-row-2 .field-phone{
+    flex:1.45 1 0 !important;
+    min-width:0 !important;
+  }
+  .visit-form-custom .visit-row-2 .field-doctor{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+  }
+  .visit-form-custom .visit-row-2 .field-doctor select{
+    text-overflow:ellipsis;
+  }
+
+  /* الصف الثالث: نوع الكشف وإجمالي الحساب */
+  .visit-form-custom .visit-row-3 .field-exam{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+  }
+  .visit-form-custom .visit-row-3 .field-total{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+  }
+
+  /* الصف الرابع: المدفوع وحالة الدفع والملاحظات */
+  .visit-form-custom .visit-row-4 .field-paid{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+  }
+  .visit-form-custom .visit-row-4 .field-status{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+  }
+  .visit-form-custom .visit-row-4 .field-notes{
+    flex:1.6 1 0 !important;
+    min-width:0 !important;
+  }
+
+  /* الصف الخامس: موعد المتابعة وتسجيل زيارة */
+  .visit-form-custom .visit-row-5 .field-next-date{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+  }
+  .visit-form-custom .visit-row-5 .field-submit{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+    justify-content:flex-end;
+  }
+  .visit-form-custom .visit-row-5 .field-submit button{
+    min-height:40px;
+    height:40px;
+    font-size:13.5px;
+    font-weight:700;
+  }
+
+  /* على التابلت والشاشات المتوسطة (641px إلى 900px) للنماذج الأخرى */
+  @media (max-width:900px){
+    .form-grid{grid-template-columns:repeat(2,1fr); gap:12px;}
+  }
+
+  /* التوافق الكامل مع شاشات الهواتف الذكية (<= 640px) */
+  @media (max-width:640px){
+    #content{padding:10px 8px 45px !important;}
+    .card{padding:12px 10px !important; border-radius:12px !important;}
+    
+    /* النماذج العامة تصبح عموداً واحداً لتجنب الانضغاط عدا نموذج الزيارة المخصص */
+    .form-grid:not(.visit-form-custom),
+    form.form-grid,
+    div.form-grid{
+      grid-template-columns:1fr !important;
+      gap:12px !important;
+    }
+    .form-grid:not(.visit-form-custom) > .field,
+    .form-grid:not(.visit-form-custom) > [style*="grid-column"]{
+      grid-column:1 / -1 !important;
+      width:100% !important;
+    }
+
+    /* حقول مريحة للمس */
+    .field input, .field select, .field textarea{
+      font-size:13.5px !important;
+      padding:8px 10px !important;
+    }
+
+    /* ضبط نموذج الزيارة بدقة بالغة على الهواتف */
+    .visit-form-custom{
+      gap:8px !important;
+    }
+    .visit-form-custom .visit-row{
+      gap:6px !important;
+    }
+    .visit-form-custom .field input,
+    .visit-form-custom .field select{
+      font-size:12.5px !important;
+      padding:6px 6px !important;
+      min-height:38px !important;
+      height:38px !important;
+    }
+    .visit-form-custom .field label{
+      font-size:11px !important;
+      margin-bottom:3px !important;
+    }
+    .visit-form-custom .visit-row-1 .field-date{
+      flex:0 0 102px !important;
+      max-width:28% !important;
+    }
+    .visit-form-custom .visit-row-1 .field-date input{
+      font-size:11px !important;
+      padding:4px 2px !important;
+      letter-spacing:-0.2px;
+    }
+    .visit-form-custom .visit-row-2 .field-phone{
+      flex:1.4 1 0 !important;
+    }
+    .visit-form-custom .visit-row-4 .field-notes{
+      flex:1.4 1 0 !important;
+    }
+    .visit-form-custom .visit-row-5 .field-submit button{
+      min-height:38px !important;
+      height:38px !important;
+      font-size:13px !important;
+      padding:0 8px !important;
+    }
+
+    #manualShareFields{
+      flex-direction:column !important;
+    }
+  }
+
+  /* لشاشات الهواتف الصغيرة جداً (<= 375px) */
+  @media (max-width:375px){
+    .visit-form-custom .visit-row{
+      gap:4px !important;
+    }
+    .visit-form-custom .field input,
+    .visit-form-custom .field select{
+      font-size:11.5px !important;
+      padding:5px 4px !important;
+      min-height:36px !important;
+      height:36px !important;
+    }
+    .visit-form-custom .field label{
+      font-size:10.5px !important;
+    }
+    .visit-form-custom .visit-row-1 .field-date{
+      flex:0 0 92px !important;
+      max-width:28% !important;
+    }
+    .visit-form-custom .visit-row-1 .field-date input{
+      font-size:10.5px !important;
+    }
+    .visit-form-custom .visit-row-5 .field-submit button{
+      min-height:36px !important;
+      height:36px !important;
+      font-size:12px !important;
+    }
+  }
+
+  @media (max-width:380px){
+    #content{padding:10px 6px 45px !important;}
+    .card{padding:12px 9px !important;}
+  }
+
+  /* تمييز الخانات الإلزامية */
   .field:has(> input:required) label, .field:has(> select:required) label{color:var(--gold);}
   .field:has(> input:required) label::after, .field:has(> select:required) label::after{content:" *"; color:var(--gold); font-weight:800;}
   .field input:required, .field select:required{border-color:var(--gold);}
@@ -239,6 +458,7 @@
     display:inline-flex; align-items:center; gap:6px; cursor:pointer;
     border:none; border-radius:10px; padding:9px 18px; font-family:'Cairo'; font-weight:700; font-size:13px;
     background:var(--teal); color:#fff; transition:filter .15s, transform .1s;
+    box-sizing:border-box;
   }
   .btn:hover{filter:brightness(1.08);}
   .btn:active{transform:scale(.98);}
@@ -248,7 +468,14 @@
   .btn.sm{padding:5px 11px; font-size:11.5px; border-radius:7px;}
 
   /* ---------- Table ---------- */
-  .table-wrap{overflow-x:auto;}
+  .table-wrap{
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    width:100%;
+    max-width:100%;
+    border-radius:8px;
+    box-sizing:border-box;
+  }
   table{width:100%; border-collapse:collapse; font-size:13px;}
   thead th{
     text-align:right; padding:10px 12px; background:#F0EEE5; color:var(--navy);
@@ -256,6 +483,11 @@
   }
   tbody td{padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; color:var(--ink);}
   tbody tr:hover{background:var(--row-hover);}
+  @media (max-width:640px){
+    table{font-size:12px;}
+    thead th{padding:8px 9px; font-size:11.5px;}
+    tbody td{padding:8px 9px;}
+  }
   .pill{display:inline-block; padding:2px 10px; border-radius:20px; font-size:11px; font-weight:700;}
   .pill.paid{background:var(--income-soft); color:var(--income);}
   .pill.partial{background:#FFF3D6; color:#8A6300;}
@@ -575,6 +807,63 @@ async function getPendingQueueKeys() {
 async function readSyncBaseline(key) { return await readLocalCache(key + "__base", []); }
 async function writeSyncBaseline(key, value) { await cacheLocally(key + "__base", value); }
 
+// ======================================================================
+// طابور الحذف الصريح (Explicit Deletions Queue) ومنع عودة السجلات (No Resurrection)
+// ======================================================================
+// عند حذف أى سجل (زيارة، وارد، منصرف، مرتب، طبيب، موظف...)، يُسجَّل معرّفه فورًا هنا:
+// 1) لمنع دمج السجل مجددًا محليًا أو سحابيًا تحت أي ظرف حتى لو كان موجودًا بالسحابة.
+// 2) تنفيذه فوريًا على Supabase إذا كان هناك اتصال نشط.
+// 3) جمعه فى طابور دائم يُرسل دفعة واحدة فور استعادة الاتصال حال العمل أوفلاين.
+async function queueDeletion(tableKey, id) {
+  if (!tableKey || !id) return;
+  try {
+    const raw = localStorage.getItem(APP_PREFIX + "deletedQueue");
+    const map = raw ? JSON.parse(raw) : {};
+    if (!map[tableKey]) map[tableKey] = [];
+    if (!map[tableKey].includes(id)) {
+      map[tableKey].push(id);
+      localStorage.setItem(APP_PREFIX + "deletedQueue", JSON.stringify(map));
+    }
+  } catch (e) { /* ignore */ }
+}
+async function getDeletedQueue(tableKey) {
+  try {
+    const raw = localStorage.getItem(APP_PREFIX + "deletedQueue");
+    const map = raw ? JSON.parse(raw) : {};
+    return Array.isArray(map[tableKey]) ? map[tableKey] : [];
+  } catch (e) { return []; }
+}
+async function clearDeletedQueue(tableKey, idsToRemove) {
+  if (!tableKey || !idsToRemove || !idsToRemove.length) return;
+  try {
+    const raw = localStorage.getItem(APP_PREFIX + "deletedQueue");
+    const map = raw ? JSON.parse(raw) : {};
+    if (map[tableKey]) {
+      const removeSet = new Set(idsToRemove);
+      map[tableKey] = map[tableKey].filter(id => !removeSet.has(id));
+      localStorage.setItem(APP_PREFIX + "deletedQueue", JSON.stringify(map));
+    }
+  } catch (e) { /* ignore */ }
+}
+async function executeRecordDeletion(tableKey, id) {
+  if (!tableKey || !id) return;
+  await queueDeletion(tableKey, id);
+  // محاولة حذف مباشر وفوري من السحابة إذا كان المتصفح متصلًا بالإنترنت
+  if (typeof sbClient !== "undefined" && sbClient && typeof STORAGE_MODE !== "undefined" && STORAGE_MODE === "supabase" && navigator.onLine) {
+    const sqlTable = typeof SB_TABLES !== "undefined" && SB_TABLES[tableKey];
+    if (sqlTable) {
+      try {
+        const { error } = await sbClient.from(sqlTable).delete().eq("id", id);
+        if (!error) {
+          await clearDeletedQueue(tableKey, [id]);
+        }
+      } catch (err) {
+        console.warn(`Direct delete for ${tableKey}:${id} will be retried in sync queue:`, err);
+      }
+    }
+  }
+}
+
 function stripUpdatedAt(o) { const c = Object.assign({}, o); delete c.updatedAt; return c; }
 function recordsEqual(a, b) {
   if (!a || !b) return false;
@@ -778,6 +1067,11 @@ async function storeGet(key, fallback) {
           else if (key === "auditLog") result = await loadAuditLogMonth((typeof state !== "undefined" && state.auditLogMonth) || todayISO().slice(0, 7));
           else if (SB_TABLES[key]) result = await sbLoadTable(key);
           if (result != null) {
+            const delQueue = await getDeletedQueue(key);
+            if (delQueue.length && Array.isArray(result)) {
+              const delSet = new Set(delQueue);
+              result = result.filter(r => r && !delSet.has(r.id));
+            }
             await cacheLocally(key, result);
             if (SB_TABLES[key] && key !== "auditLog") await writeSyncBaseline(key, result); // نقطة توافق معروفة بين المحلى والسحابى
             return result;
@@ -1924,7 +2218,7 @@ const SB_CRED_KEY = APP_PREFIX + "supabase_credentials";
 // على أي جهاز أو متصفح دون الحاجة لإدخالها يدويًا فى كل مرة.
 // رقم إصدار النظام - يُحدَّث يدويًا مع كل تعديل حقيقى فى الكود، ليسهل معرفة
 // هل الهاتف شغّال بأحدث نسخة أم لا بمجرد النظر لصفحة الإعدادات، بدل تخمين ذلك.
-const APP_VERSION = "v4.9.18 — إصلاح فشل مزامنة زيارة التحصيل بسبب موعد متابعة فارغ (invalid input syntax for type date) (2026-08-07)";
+const APP_VERSION = "v4.9.19 — مزامنة سحابية لحظية شاملة ومنع عودة السجلات المحذوفة عبر جميع الأجهزة (2026-10-14)";
 
 const DEFAULT_SB_URL = "https://qnhotbzzjqayapialnmi.supabase.co";
 const DEFAULT_SB_KEY = "sb_publishable_LACIDuCYzro_CAsVTDq1jA_yXxz42ee";
@@ -2143,58 +2437,104 @@ async function pushTableSmart(key, localArr) {
   const localMap = new Map(localArr.map(r => [r.id, r]));
   const manualReview = !!(DB.settings && DB.settings.manualConflictReview);
 
-  const toUpsert = [], toDelete = [], conflicts = [], mergedLocal = [];
+  const explicitDeleted = await getDeletedQueue(key);
+  const deletedSet = new Set(explicitDeleted);
 
-  for (const local of localArr) {
+  const toUpsert = [], toDeleteSet = new Set(), conflicts = [], mergedLocal = [];
+
+  // 1) جمع السجلات المحذوفة صراحة فى طابور الحذف
+  for (const delId of explicitDeleted) {
+    toDeleteSet.add(delId);
+  }
+
+  // 2) مقارنة خط الأساس مع النسخة المحلية: إن كان السجل معروفًا مسبقًا وغاب عن النسخة المحلية وما زال بالسحابة
+  for (const base of (baseline || [])) {
+    if (!localMap.has(base.id) && remoteMap.has(base.id)) {
+      toDeleteSet.add(base.id);
+    }
+  }
+
+  // 3) معالجة السجلات المحلية
+  for (const local of (localArr || [])) {
+    if (toDeleteSet.has(local.id) || deletedSet.has(local.id)) {
+      continue; // محذوف صراحة - لا يُرفع ولا يبقى فى النسخة المدمجة
+    }
     const remote = remoteMap.get(local.id);
-    if (!remote) { toUpsert.push(local); mergedLocal.push(local); continue; }
-    if (recordsEqual(local, remote)) { mergedLocal.push(local); continue; }
+    if (!remote) {
+      // هل كان هذا السجل موجودًا مسبقًا فى خط الأساس واختفى من السحابة؟
+      if (baseMap.has(local.id)) {
+        // حذفه مستخدم أو جهاز آخر من السحابة! لا تقم ببعثه من جديد!
+        continue;
+      }
+      // سجل جديد تمامًا أُضيف محليًا (أوفلاين أو قبل المزامنة)
+      toUpsert.push(local);
+      mergedLocal.push(local);
+      continue;
+    }
+
+    if (recordsEqual(local, remote)) {
+      mergedLocal.push(local);
+      continue;
+    }
+
     const localTime = local.updatedAt || "";
     const remoteTime = remote.updatedAt || "";
     if (!remoteTime || localTime >= remoteTime) {
-      toUpsert.push(local); mergedLocal.push(local);
+      toUpsert.push(local);
+      mergedLocal.push(local);
     } else {
-      // السحابة أحدث زمنيًا ومحتواها مختلف عن المحلى = تعارض محتمل
       const base = baseMap.get(local.id);
       const localChangedSinceBase = !base || !recordsEqual(base, local);
       if (!localChangedSinceBase) {
-        mergedLocal.push(remote); // المحلى لم يتغيّر أصلًا، اعتمد النسخة السحابية الأحدث دون إزعاج أحد
+        mergedLocal.push(remote);
       } else if (manualReview) {
         conflicts.push({ table: key, id: local.id, local, remote, detectedAt: nowISO() });
-        mergedLocal.push(local); // احتفظ بالمحلى مؤقتًا دون دفعه لحين قرار المدير
+        mergedLocal.push(local);
       } else {
-        mergedLocal.push(remote); // تلقائى: الأحدث زمنيًا (وهو السحابى هنا) يفوز
+        mergedLocal.push(remote);
       }
     }
   }
-  // سجلات موجودة سحابيًا فقط (أضافها جهاز آخر ولم تصل بعد لهذا الجهاز) - أضِفها محليًا، لا تحذفها أبدًا
+
+  // 4) معالجة السجلات السحابية (الواردة من السحابة):
   for (const remote of remoteArr) {
-    if (!localMap.has(remote.id)) mergedLocal.push(remote);
+    if (toDeleteSet.has(remote.id) || deletedSet.has(remote.id)) {
+      continue; // محذوف - استبعده فورًا من الإضافة للنسخة المدمجة
+    }
+    if (!localMap.has(remote.id)) {
+      // إن كان معروفًا محليًا فى خط الأساس ولم يعد موجودًا فى localMap، فهذا الجهاز هو من حذفه
+      if (baseMap.has(remote.id)) {
+        toDeleteSet.add(remote.id);
+        continue; // لا تُعِده للمدمج أبدًا
+      }
+      // سجل جديد تمامًا أضافه جهاز آخر -> أضِفه للنسخة المحلية
+      mergedLocal.push(remote);
+    }
   }
-  // حذف حقيقى فقط: كان معروفًا محليًا فى آخر مزامنة، وأصبح غائبًا محليًا الآن (حُذف فعليًا)،
-  // وما زال موجودًا سحابيًا. أما السجلات "غير المعروفة" محليًا فلا تُحذف أبدًا حتى لا نفقد بيانات جهاز آخر.
-  for (const base of (baseline || [])) {
-    if (!localMap.has(base.id) && remoteMap.has(base.id)) toDelete.push(base.id);
-  }
+
+  // تصفية نهائية صارمة لضمان خلو النسخة المدمجة من أى سجل محذوف
+  const finalMerged = mergedLocal.filter(r => r && r.id && !toDeleteSet.has(r.id) && !deletedSet.has(r.id));
 
   // فرز سجل النشاط دائمًا من الأحدث للأقدم
   if (key === "auditLog") {
-    mergedLocal.sort((a, b) => {
+    finalMerged.sort((a, b) => {
       const timeA = a.timestamp || ((a.date || "") + " " + (a.time || ""));
       const timeB = b.timestamp || ((b.date || "") + " " + (b.time || ""));
       return timeB.localeCompare(timeA);
     });
-    if (mergedLocal.length > MAX_AUDIT_ENTRIES) mergedLocal.length = MAX_AUDIT_ENTRIES;
+    if (finalMerged.length > MAX_AUDIT_ENTRIES) finalMerged.length = MAX_AUDIT_ENTRIES;
   }
 
   // تقسيم العمليات الكبيرة إلى دفعات صغيرة (200 سجل لكل دفعة)
+  const toDelete = Array.from(toDeleteSet);
   const CHUNK = 200;
   const chunkArray = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
   if (toDelete.length) {
     for (const batch of chunkArray(toDelete, CHUNK)) {
       const { error: delErr } = await sbClient.from(table).delete().in("id", batch);
-      if (delErr) throw delErr;
+      if (delErr) console.warn("Supabase delete in pushTableSmart error:", delErr);
     }
+    await clearDeletedQueue(key, toDelete);
   }
   if (toUpsert.length) {
     const rows = toUpsert.map(o => sbToRow(key, o));
@@ -2204,7 +2544,7 @@ async function pushTableSmart(key, localArr) {
     }
   }
   if (conflicts.length) await stashConflicts(conflicts);
-  return mergedLocal;
+  return finalMerged;
 }
 // استعادة كاملة وصريحة عند استخدام "استعادة نسخة احتياطية": بخلاف pushTableSmart
 // العادية (التى تقارن بآخر ما يعرفه هذا الجهاز تحديدًا لتفادى حذف بيانات أجهزة
@@ -2458,8 +2798,7 @@ window.addEventListener("online", async () => {
     SYNC_NEXT_RETRY_AT = 0; // عودة اتصال حقيقية = فرصة جديدة، تتجاوز فترة الانتظار التصاعدي
     await flushPendingSync();
     await loadAll();
-    subscribeStaffAccountsRealtime();
-    subscribeAuditRealtime();
+    subscribeUniversalRealtime();
     if (!isMidEdit() && !isUserActivelyTyping()) route();
   }
 });
@@ -2468,9 +2807,9 @@ window.addEventListener("offline", () => {
   renderSidebarExtra();
 });
 document.getElementById("sidebarOverlay").addEventListener("click", () => document.body.classList.remove("sidebar-open"));
-// مزامنة دورية فى الخلفية كل 45 ثانية بدون تجميد الواجهة، تحسبًا لأى عمليات
+// مزامنة دورية فى الخلفية كل 15 ثانية بدون تجميد الواجهة، تحسبًا لأى عمليات
 // معلّقة لم تُرفَع بعد (مثلًا بعد فشل مؤقت فى الشبكة رغم ظهور "متصل").
-setInterval(() => { if (STORAGE_MODE === "supabase" && !SYNC_PAUSED) flushPendingSync(); }, 45000);
+setInterval(() => { if (STORAGE_MODE === "supabase" && !SYNC_PAUSED) flushPendingSync(); }, 15000);
 
 // ======================================================================
 // تحديث دورى صامت فى الخلفية (بدون تسجيل خروج): يسحب أحدث نسخة من كل الجداول
@@ -2522,7 +2861,7 @@ async function backgroundRefreshAll() {
     BACKGROUND_REFRESH_IN_PROGRESS = false;
   }
 }
-setInterval(backgroundRefreshAll, 60000);
+setInterval(backgroundRefreshAll, 20000);
 
 // ======================================================================
 // مركز التنبيهات الموحّد - يجمع كل التنبيهات والمستحقات
@@ -3239,30 +3578,78 @@ function renderVisitsPage(kind) {
       <div class="section-title">${editing ? "تعديل زيارة" : "تسجيل زيارة جديدة"}
         <span class="hint">${doctorsPool.length} طبيب نشط متاح</span>
       </div>
-      <form id="visitForm" class="form-grid visit-grid-3">
-        <div class="field"><label>التاريخ</label><input type="date" name="date" required value="${editing?.date || todayISO()}"></div>
+      <form id="visitForm" class="visit-form-custom">
         <input type="hidden" name="fileNo" id="visitFileNoInput" value="${esc(editing ? editing.fileNo : "")}">
-        <div class="field" style="grid-column:span 2; position:relative;">
-          <label>اسم المريض</label>
-          <input type="text" name="patient" id="visitPatientInput" required autocomplete="off" value="${esc(editing?.patient)}">
-          <div id="visitPatientSuggest" style="display:none; position:absolute; z-index:20; top:100%; right:0; left:0; background:#fff; border:1px solid var(--border,#ccc); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.12); max-height:220px; overflow:auto;"></div>
+
+        <!-- الصف الأول: التاريخ بحجم صغير واسم المريض أكثر من ثلاث أرباع الصف -->
+        <div class="visit-row visit-row-1">
+          <div class="field field-date">
+            <label>التاريخ</label>
+            <input type="date" name="date" required value="${editing?.date || todayISO()}">
+          </div>
+          <div class="field field-patient">
+            <label>اسم المريض</label>
+            <input type="text" name="patient" id="visitPatientInput" required autocomplete="off" value="${esc(editing?.patient)}">
+            <div id="visitPatientSuggest" style="display:none; position:absolute; z-index:30; top:100%; right:0; left:0; background:var(--card,#fff); color:var(--ink); border:1px solid var(--border,#ccc); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.12); max-height:220px; overflow:auto;"></div>
+          </div>
         </div>
-        <div class="field"><label>رقم الهاتف</label><input type="text" name="phone" id="visitPhoneInput" value="${esc(editing?.phone)}"></div>
-        <div class="field"><label>الطبيب</label>
-          <select name="doctorId" id="visitDoctorSelect" required>
-            <option value="">اختر طبيبًا</option>
-            ${doctorsPool.map(d => `<option value="${d.id}" ${editing?.doctorId === d.id ? "selected" : ""} data-checkup-price="${d.checkupPrice ?? ""}" data-followup-price="${d.followupPrice ?? ""}">${esc(d.name)} — ${esc(d.specialty)}</option>`).join("")}
-          </select>
+
+        <!-- الصف الثاني: رقم الهاتف أكبر من خانة الطبيب -->
+        <div class="visit-row visit-row-2">
+          <div class="field field-phone">
+            <label>رقم الهاتف</label>
+            <input type="text" name="phone" id="visitPhoneInput" value="${esc(editing?.phone)}">
+          </div>
+          <div class="field field-doctor">
+            <label>الطبيب</label>
+            <select name="doctorId" id="visitDoctorSelect" required>
+              <option value="">اختر طبيبًا</option>
+              ${doctorsPool.map(d => `<option value="${d.id}" ${editing?.doctorId === d.id ? "selected" : ""} data-checkup-price="${d.checkupPrice ?? ""}" data-followup-price="${d.followupPrice ?? ""}">${esc(d.name)} — ${esc(d.specialty)}</option>`).join("")}
+            </select>
+          </div>
         </div>
-        <div class="field"><label>نوع الكشف</label><select name="examType" id="visitExamTypeSelect">${option(LISTS.examTypes, editing?.examType)}</select></div>
-        <div class="field"><label>إجمالي الحساب (ج.م)</label><input type="text" inputmode="decimal" step="0.01" name="total" id="visitTotalInput" required value="${editing?.total ?? ""}"></div>
-        <div class="field"><label>المدفوع</label><input type="text" inputmode="decimal" step="0.01" name="paid" required value="${editing?.paid ?? ""}"></div>
-        <div class="field"><label>حالة الدفع</label><select name="status">${option(LISTS.payStatus, editing?.status)}</select></div>
-        <div class="field"><label>ملاحظات</label><input type="text" name="notes" value="${esc(editing?.notes)}"></div>
-        <div class="field"><label>موعد المتابعة (اختياري)</label><input type="date" name="nextVisitDate" value="${editing?.nextVisitDate || ""}"></div>
-        <div class="field" style="align-self:end; display:flex; gap:8px;">
-          <button type="submit" class="btn">${editing ? "حفظ التعديل" : "تسجيل الزيارة"}</button>
-          ${editing ? `<button type="button" class="btn ghost" id="cancelEdit">إلغاء</button>` : ""}
+
+        <!-- الصف الثالث: نوع الكشف وإجمالي الحساب -->
+        <div class="visit-row visit-row-3">
+          <div class="field field-exam">
+            <label>نوع الكشف</label>
+            <select name="examType" id="visitExamTypeSelect">${option(LISTS.examTypes, editing?.examType)}</select>
+          </div>
+          <div class="field field-total">
+            <label>إجمالي الحساب (ج.م)</label>
+            <input type="text" inputmode="decimal" step="0.01" name="total" id="visitTotalInput" required value="${editing?.total ?? ""}">
+          </div>
+        </div>
+
+        <!-- الصف الرابع: المدفوع وحالة الدفع والملاحظات -->
+        <div class="visit-row visit-row-4">
+          <div class="field field-paid">
+            <label>المدفوع</label>
+            <input type="text" inputmode="decimal" step="0.01" name="paid" required value="${editing?.paid ?? ""}">
+          </div>
+          <div class="field field-status">
+            <label>حالة الدفع</label>
+            <select name="status">${option(LISTS.payStatus, editing?.status)}</select>
+          </div>
+          <div class="field field-notes">
+            <label>ملاحظات</label>
+            <input type="text" name="notes" value="${esc(editing?.notes)}" placeholder="اختياري...">
+          </div>
+        </div>
+
+        <!-- الصف الخامس: موعد المتابعة وتسجيل زيارة -->
+        <div class="visit-row visit-row-5">
+          <div class="field field-next-date">
+            <label>موعد المتابعة (اختياري)</label>
+            <input type="date" name="nextVisitDate" value="${editing?.nextVisitDate || ""}">
+          </div>
+          <div class="field field-submit">
+            <label style="visibility:hidden; display:block; margin-bottom:4px; font-size:11.5px;">إجراء</label>
+            <div style="display:flex; gap:6px; width:100%;">
+              <button type="submit" class="btn" style="flex:1; justify-content:center;">${editing ? "حفظ التعديل" : "تسجيل الزيارة"}</button>
+              ${editing ? `<button type="button" class="btn ghost" id="cancelEdit">إلغاء</button>` : ""}
+            </div>
+          </div>
         </div>
       </form>
     </div>` : ""}
@@ -3489,19 +3876,23 @@ function renderVisitsPage(kind) {
       paid: v2.paid, remaining: visitRemaining(v2),
     });
   }));
-  c.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
+  c.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
     if (!canDelete) { showToast("⚠️ ليس لديك صلاحية حذف الزيارات"); return; }
     const target = list.find(v => v.id === b.dataset.del);
     const hasLinked = target && target.linkedIncomeId;
     if (!confirm(hasLinked ? "هل تريد حذف هذه الزيارة؟ سيتم أيضًا حذف حركة الوارد المرتبطة بها فى دفتر الخزينة." : "هل تريد حذف هذه الزيارة؟")) return;
+    const removedId = b.dataset.del;
     if (hasLinked) {
-      const idx2 = DB.income.findIndex(x => x.id === target.linkedIncomeId);
+      const linkedIncId = target.linkedIncomeId;
+      const idx2 = DB.income.findIndex(x => x.id === linkedIncId);
       if (idx2 > -1) DB.income.splice(idx2, 1);
+      await executeRecordDeletion("income", linkedIncId);
       persist("income");
     }
-    const idx = list.findIndex(v => v.id === b.dataset.del);
+    const idx = list.findIndex(v => v.id === removedId);
     const removed = idx > -1 ? list[idx] : null;
     if (idx > -1) list.splice(idx, 1);
+    await executeRecordDeletion(isDental ? "visitsDental" : "visitsClinic", removedId);
     logActivity(isDental ? "حذف حالة أسنان" : "حذف زيارة", kind, removed, null);
     persist(isDental ? "visitsDental" : "visitsClinic");
     showToast("تم الحذف");
@@ -3672,7 +4063,7 @@ function renderPatientFilesPage(kind) {
     <div style="position:relative; margin-bottom:16px;">
       <span style="position:absolute; top:50%; right:14px; transform:translateY(-50%); font-size:15px; pointer-events:none; opacity:.65;">🔍</span>
       <input type="text" id="patientSearchInput" placeholder="ابحث باسم المريض أو رقم الهاتف أو رقم الملف..." value="${esc(search)}"
-        style="width:100%; padding:11px 42px 11px 14px; border-radius:10px; border:1px solid var(--border,#ccc); font-size:14px; background:#fff;">
+        style="width:100%; box-sizing:border-box; padding:11px 42px 11px 14px; border-radius:10px; border:1px solid var(--border,#ccc); font-size:14px; background:var(--card,#fff); color:var(--ink);">
     </div>
 
     ${selected ? renderPatientCard(selected) : (
@@ -4179,10 +4570,11 @@ function renderMoneyPage(kind) {
   const cancelBtn = document.getElementById("cancelEdit");
   if (cancelBtn) cancelBtn.addEventListener("click", () => { state.editId = null; route(); });
   c.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => { state.editId = b.dataset.edit; route(); }));
-  c.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
+  c.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
     if (!canDelete) { showToast("⚠️ ليس لديك صلاحية حذف العمليات"); return; }
     if (!confirm("هل تريد حذف هذه العملية؟")) return;
-    const idx = list.findIndex(v => v.id === b.dataset.del);
+    const delId = b.dataset.del;
+    const idx = list.findIndex(v => v.id === delId);
     const removed = idx > -1 ? list[idx] : null;
     if (idx > -1) list.splice(idx, 1);
     // إصلاح: حذف قيد وارد/منصرف من هذه الصفحة مباشرة (بدل حذف الزيارة أو المرتب
@@ -4199,6 +4591,7 @@ function renderMoneyPage(kind) {
         DB.labExpenses.forEach(l => { if (l.linkedExpenseId === removed.id) l.linkedExpenseId = null; });
       }
     }
+    await executeRecordDeletion(isIncome ? "income" : "expense", delId);
     logActivity(isIncome ? "حذف عملية وارد" : "حذف عملية منصرف", kind, removed, null);
     persist(isIncome ? "income" : "expense");
     if (removed) { persist("visitsClinic"); persist("visitsDental"); persist("payroll"); persist("labExpenses"); }
@@ -4506,17 +4899,22 @@ function renderPayroll() {
     if (!can("payroll","edit")) { showToast("⚠️ ليس لديك صلاحية تعديل"); return; }
     state.editId = b.dataset.edit; route();
   }));
-  c.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
+  c.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
     if (!can("payroll","delete")) { showToast("⚠️ ليس لديك صلاحية حذف"); return; }
     const rec = list.find(v => v.id === b.dataset.del);
     const hasLinked = rec && rec.linkedExpenseId;
     if (!confirm(hasLinked ? "حذف هذا السجل؟ سيتم أيضًا حذف حركة الصرف المرتبطة به فى دفتر الخزينة." : "حذف هذا السجل؟")) return;
+    const delId = b.dataset.del;
     if (hasLinked) {
-      const idx = DB.expense.findIndex(x => x.id === rec.linkedExpenseId);
+      const linkedExpId = rec.linkedExpenseId;
+      const idx = DB.expense.findIndex(x => x.id === linkedExpId);
       if (idx > -1) DB.expense.splice(idx, 1);
+      await executeRecordDeletion("expense", linkedExpId);
       persist("expense");
     }
-    list.splice(list.findIndex(v => v.id === b.dataset.del), 1);
+    const idx2 = list.findIndex(v => v.id === delId);
+    if (idx2 > -1) list.splice(idx2, 1);
+    await executeRecordDeletion("payroll", delId);
     persist("payroll"); showToast("تم الحذف"); route();
   }));
 }
@@ -5659,7 +6057,7 @@ function renderSettings() {
     logActivity("تغيير حالة طبيب", "settings", before, d.status);
     persist("doctors"); route();
   }));
-  c.querySelectorAll("[data-deldoc]").forEach(b => b.addEventListener("click", () => {
+  c.querySelectorAll("[data-deldoc]").forEach(b => b.addEventListener("click", async () => {
     if (!can("doctors","delete")) { showToast("⚠️ ليس لديك صلاحية"); return; }
     const docId = b.dataset.deldoc;
     // إصلاح سلامة محاسبية: حذف الطبيب نهائيًا لا يمسّ سجلات الزيارات القديمة
@@ -5680,6 +6078,7 @@ function renderSettings() {
     const idx = DB.doctors.findIndex(x => x.id === docId);
     const removed = idx > -1 ? DB.doctors[idx] : null;
     if (idx > -1) DB.doctors.splice(idx, 1);
+    await executeRecordDeletion("doctors", docId);
     logActivity("حذف طبيب", "settings", removed, null);
     persist("doctors"); showToast("تم الحذف"); route();
   }));
@@ -5708,12 +6107,14 @@ function renderSettings() {
   }
   c.querySelectorAll("[data-docup]").forEach(b => b.addEventListener("click", () => moveDoc(b.dataset.docup, -1)));
   c.querySelectorAll("[data-docdown]").forEach(b => b.addEventListener("click", () => moveDoc(b.dataset.docdown, 1)));
-  c.querySelectorAll("[data-delemp]").forEach(b => b.addEventListener("click", () => {
+  c.querySelectorAll("[data-delemp]").forEach(b => b.addEventListener("click", async () => {
     if (!can("employees","delete")) { showToast("⚠️ ليس لديك صلاحية"); return; }
     if (!confirm("حذف هذا الموظف؟")) return;
-    const idx = DB.employees.findIndex(x => x.id === b.dataset.delemp);
+    const empId = b.dataset.delemp;
+    const idx = DB.employees.findIndex(x => x.id === empId);
     const removed = idx > -1 ? DB.employees[idx] : null;
     if (idx > -1) DB.employees.splice(idx, 1);
+    await executeRecordDeletion("employees", empId);
     logActivity("حذف موظف", "settings", removed, null);
     persist("employees"); showToast("تم الحذف"); route();
   }));
@@ -5960,7 +6361,9 @@ function renderUsersPage() {
     if (currentUser && currentUser.id === a.id) { showToast("⚠️ لا يمكنك حذف حسابك الحالي أثناء تسجيل الدخول به"); return; }
     if (a.role === "مدير" && countActiveAdmins(a.id) === 0) { showToast("⚠️ لا يمكن حذف آخر مدير نشط فى النظام"); return; }
     if (!confirm(`حذف المستخدم "${a.displayName}"؟ لن يتمكن من تسجيل الدخول بعد الآن.`)) return;
-    DB.staffAccounts.splice(DB.staffAccounts.findIndex(x => x.id === a.id), 1);
+    const delUserId = a.id;
+    DB.staffAccounts.splice(DB.staffAccounts.findIndex(x => x.id === delUserId), 1);
+    await executeRecordDeletion("staffAccounts", delUserId);
     logActivity("حذف مستخدم", "users", a.displayName, null);
     try {
       await persist("staffAccounts");
@@ -6620,61 +7023,144 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && cu
 // ======================================================================
 // التشغيل
 // ======================================================================
-// اشتراك لحظي (Realtime) فى تغييرات جدول حسابات المستخدمين وسجل النشاط،
-// حتى تصل أي تعديلات فورًا لباقي الأجهزة بدون الحاجة لانتظار المزامنة الدورية.
-let staffRealtimeChannel = null;
-function subscribeStaffAccountsRealtime() {
-  if (!sbClient || STORAGE_MODE !== "supabase" || staffRealtimeChannel) return;
+// اشتراك لحظي شامل (Universal Supabase Realtime) لجميع الجداول
+// يضمن وصول أي إضافة أو تعديل أو حذف فورًا لجميع الأجهزة والمتصفحات المفتوحة
+// (سواء على الموبايل أو الكمبيوتر) بدون الحاجة لتحديث الصفحة أو الانتظار.
+// ======================================================================
+const SQL_TABLE_TO_DB_KEY = {
+  "visits_clinic": "visitsClinic",
+  "visits_dental": "visitsDental",
+  "income": "income",
+  "expense": "expense",
+  "payroll": "payroll",
+  "doctors": "doctors",
+  "employees": "employees",
+  "lab_expenses": "labExpenses",
+  "staff_accounts": "staffAccounts",
+  "audit_log": "auditLog",
+};
+
+let universalRealtimeChannel = null;
+function subscribeUniversalRealtime() {
+  if (!sbClient || STORAGE_MODE !== "supabase" || universalRealtimeChannel) return;
   try {
-    staffRealtimeChannel = sbClient
-      .channel("staff_accounts_live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "staff_accounts" }, async () => {
-        if (!navigator.onLine || SYNC_PAUSED) return;
-        if (PENDING_WRITES > 0) return; // نفس حماية backgroundRefreshAll: لا تسحب أثناء حفظ جارٍ
-        try {
-          const pendingNow = await getPendingQueueKeys();
-          if (pendingNow.includes("staffAccounts")) return; // لا تسحب فوق تعديل محلى لم يُرفَع بعد
-          DB.staffAccounts = await storeGet("staffAccounts", DB.staffAccounts);
-          if (currentUser) {
-            const me = DB.staffAccounts.find(a => a.id === currentUser.id);
-            if (!me || me.status === "موقوف") { clearSession(); renderLogin("تم إيقاف هذا الحساب أو حذفه."); return; }
-          }
-          if (!isMidEdit() && !isUserActivelyTyping()) route();
-        } catch (e) { console.error("Realtime staffAccounts refresh failed:", e); }
-      })
-      .subscribe();
-  } catch (e) { console.error("Realtime subscribe failed:", e); staffRealtimeChannel = null; }
-}
-let auditRealtimeChannel = null;
-function subscribeAuditRealtime() {
-  if (!sbClient || STORAGE_MODE !== "supabase" || auditRealtimeChannel) return;
-  try {
-    auditRealtimeChannel = sbClient
-      .channel("audit_log_live")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "audit_log" }, async (payload) => {
-        if (!payload || !payload.new) return;
-        try {
-          const newRec = sbFromRow("auditLog", payload.new);
-          if (!newRec || !newRec.id) return;
-          AUDIT_UPLOADED_IDS.add(newRec.id);
-          const currentYm = (typeof state !== "undefined" && state.auditLogMonth) || todayISO().slice(0, 7);
-          const recYm = (newRec.date || "").slice(0, 7);
-          if (recYm === currentYm) {
-            DB.auditLog = DB.auditLog || [];
-            if (!DB.auditLog.some(r => r.id === newRec.id)) {
-              DB.auditLog.unshift(newRec);
-              if (DB.auditLog.length > MAX_AUDIT_ENTRIES) DB.auditLog.length = MAX_AUDIT_ENTRIES;
-              await cacheLocally("auditLog", DB.auditLog);
-              if (state.page === "auditlog" && !isMidEdit() && !isUserActivelyTyping()) {
+    universalRealtimeChannel = sbClient
+      .channel("unified_clinic_live")
+      .on("postgres_changes", { event: "*", schema: "public" }, async (payload) => {
+        if (!payload || !payload.table) return;
+        const dbKey = SQL_TABLE_TO_DB_KEY[payload.table];
+        if (!dbKey) return;
+        const event = payload.eventType; // "INSERT", "UPDATE", "DELETE"
+        
+        // 1) حذف لحظي فوري (DELETE)
+        if (event === "DELETE") {
+          const delId = payload.old && payload.old.id;
+          if (!delId) return;
+          if (Array.isArray(DB[dbKey])) {
+            const beforeLen = DB[dbKey].length;
+            DB[dbKey] = DB[dbKey].filter(r => r && r.id !== delId);
+            if (DB[dbKey].length !== beforeLen) {
+              await cacheLocally(dbKey, DB[dbKey]);
+              const base = await readSyncBaseline(dbKey);
+              if (Array.isArray(base)) {
+                await writeSyncBaseline(dbKey, base.filter(r => r && r.id !== delId));
+              }
+              DATA_VERSION++;
+              if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
                 route();
               }
             }
           }
-        } catch (e) { console.error("Realtime audit payload error:", e); }
+          return;
+        }
+
+        // 2) إضافة لحظية فورية (INSERT)
+        if (event === "INSERT") {
+          const rawRow = payload.new;
+          if (!rawRow || !rawRow.id) return;
+          const item = sbFromRow(dbKey, rawRow);
+          if (!item || !item.id) return;
+
+          if (dbKey === "auditLog") {
+            AUDIT_UPLOADED_IDS.add(item.id);
+            const currentYm = (typeof state !== "undefined" && state.auditLogMonth) || todayISO().slice(0, 7);
+            const recYm = (item.date || "").slice(0, 7);
+            if (recYm === currentYm) {
+              DB.auditLog = DB.auditLog || [];
+              if (!DB.auditLog.some(r => r.id === item.id)) {
+                DB.auditLog.unshift(item);
+                if (DB.auditLog.length > MAX_AUDIT_ENTRIES) DB.auditLog.length = MAX_AUDIT_ENTRIES;
+                await cacheLocally("auditLog", DB.auditLog);
+                if (state.page === "auditlog" && !isMidEdit() && !isUserActivelyTyping()) route();
+              }
+            }
+            return;
+          }
+
+          if (Array.isArray(DB[dbKey])) {
+            const exists = DB[dbKey].some(r => r && r.id === item.id);
+            if (!exists) {
+              DB[dbKey].push(item);
+              await cacheLocally(dbKey, DB[dbKey]);
+              const base = await readSyncBaseline(dbKey);
+              if (Array.isArray(base)) {
+                await writeSyncBaseline(dbKey, [...base, item]);
+              }
+              DATA_VERSION++;
+              if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
+                route();
+              }
+            }
+          }
+          return;
+        }
+
+        // 3) تعديل لحظي فوري (UPDATE)
+        if (event === "UPDATE") {
+          const rawRow = payload.new;
+          if (!rawRow || !rawRow.id) return;
+          const item = sbFromRow(dbKey, rawRow);
+          if (!item || !item.id) return;
+
+          if (dbKey === "staffAccounts" && currentUser) {
+            if (item.id === currentUser.id && item.status === "موقوف") {
+              clearSession();
+              renderLogin("تم إيقاف هذا الحساب أو حذفه.");
+              return;
+            }
+          }
+
+          if (Array.isArray(DB[dbKey])) {
+            const idx = DB[dbKey].findIndex(r => r && r.id === item.id);
+            if (idx > -1) {
+              if (state.editId === item.id || state.editDocId === item.id || state.editUserId === item.id || state.editEmpId === item.id) return;
+              DB[dbKey][idx] = Object.assign({}, DB[dbKey][idx], item);
+              await cacheLocally(dbKey, DB[dbKey]);
+              const base = await readSyncBaseline(dbKey);
+              if (Array.isArray(base)) {
+                const bIdx = base.findIndex(r => r && r.id === item.id);
+                if (bIdx > -1) base[bIdx] = item; else base.push(item);
+                await writeSyncBaseline(dbKey, base);
+              }
+              DATA_VERSION++;
+              if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
+                route();
+              }
+            }
+          }
+          return;
+        }
       })
-      .subscribe();
-  } catch (e) { console.error("Realtime audit subscribe failed:", e); auditRealtimeChannel = null; }
+      .subscribe((status, err) => {
+        if (err) console.warn("Universal Realtime channel error:", err);
+      });
+  } catch (e) {
+    console.error("Universal Realtime subscribe failed:", e);
+    universalRealtimeChannel = null;
+  }
 }
+function subscribeStaffAccountsRealtime() { subscribeUniversalRealtime(); }
+function subscribeAuditRealtime() { subscribeUniversalRealtime(); }
 async function boot() {
   document.getElementById("content").innerHTML = `
     <div id="splashScreen" style="min-height:80vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:30px;">
@@ -6719,8 +7205,7 @@ async function boot() {
   // المتصفح أثناء انقطاع الاتصال)، حاول رفعها الآن فى الخلفية دون تعطيل الواجهة.
   if (STORAGE_MODE === "supabase" && !SYNC_PAUSED) flushPendingSync();
   if (STORAGE_MODE === "supabase" && navigator.onLine) {
-    subscribeStaffAccountsRealtime();
-    subscribeAuditRealtime();
+    subscribeUniversalRealtime();
     // فحص وتنظيف تلقائي للسجلات القديمة الأقدم من 3 شهور لتوفير مساحة السحابة
     setTimeout(() => { autoPurgeOldAuditLogs(); }, 3000);
   }
