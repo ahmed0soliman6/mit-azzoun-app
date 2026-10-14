@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "نظام إدارة مجمع ميت عزون الطبي",
   "short_name": "مجمع ميت عزون",
   "description": "نظام إدارة مجمع ميت عزون الطبي - جمعية تنمية المجتمع",
@@ -7,7 +8,7 @@
   "display": "standalone",
   "orientation": "any",
   "background_color": "#FFFFFF",
-  "theme_color": "#183E9F",
+  "theme_color": "#173B4A",
   "dir": "rtl",
   "lang": "ar",
   "icons": [

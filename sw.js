@@ -1,9 +1,10 @@
-const CACHE_NAME = "mit-azzoun-clinic-v4-9-20";
+const CACHE_NAME = "mit-azzoun-clinic-v5-0-0";
 const SHELL_FILES = [
   "./index.html",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
+  "./icon-512-maskable.png",
 ];
 
 // عند التثبيت: نخزّن ملفات التطبيق الأساسية (App Shell) عشان تفتح فورًا حتى بدون إنترنت
@@ -26,7 +27,7 @@ self.addEventListener("activate", (event) => {
 
 // استراتيجية الجلب:
 // - لملف التطبيق نفسه (index.html): "الشبكة أولًا" لو متصل (عشان تاخد آخر تحديث)، وكاش لو الشبكة فشلت.
-// - لأي حاجة تانية (مكتبات خارجية زي Chart.js/Supabase): كاش أولًا، وتحديث فى الخلفية.
+// - لأي حاجة تانية (مكتبات خارجية زي Chart.js/Supabase والأيقونات): كاش أولًا، وتحديث فى الخلفية.
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
