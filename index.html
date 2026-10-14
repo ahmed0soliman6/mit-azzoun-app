@@ -2513,12 +2513,7 @@ async function pushTableSmart(key, localArr) {
     }
     const remote = remoteMap.get(local.id);
     if (!remote) {
-      // هل كان هذا السجل موجودًا مسبقًا فى خط الأساس واختفى من السحابة؟
-      if (baseMap.has(local.id)) {
-        // حذفه مستخدم أو جهاز آخر من السحابة! لا تقم ببعثه من جديد!
-        continue;
-      }
-      // سجل جديد تمامًا أُضيف محليًا (أوفلاين أو قبل المزامنة)
+      // السجل موجود محليًا ولم يُحذف صراحةً من هذا الجهاز - يُحتفظ به دائمًا ويُرفع للسحابة
       toUpsert.push(local);
       mergedLocal.push(local);
       continue;
