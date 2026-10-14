@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>نظام إدارة مجمع ميت عزون الطبي - جمعية تنمية المجتمع</title>
+<meta name="description" content="نظام إدارة مجمع ميت عزون الطبي - جمعية تنمية المجتمع">
+<meta property="og:title" content="نظام إدارة مجمع ميت عزون الطبي - جمعية تنمية المجتمع">
+<meta property="og:description" content="نظام إدارة مجمع ميت عزون الطبي - جمعية تنمية المجتمع">
+<link rel="manifest" href="manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@500;700;900&family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
@@ -1244,6 +1248,25 @@ async function loadAll() {
     });
   });
   if (upgraded) persist("staffAccounts");
+
+  // ترقية السجلات القديمة: ربط اسم منشئ الزيارة بقيد الوارد المرتبط بها إن كان فارغًا
+  let incomeUpgraded = false;
+  const allV = [...(DB.visitsClinic || []), ...(DB.visitsDental || [])];
+  const visitIncomeMap = new Map();
+  allV.forEach(v => {
+    if (v.linkedIncomeId && v.createdBy) {
+      visitIncomeMap.set(v.linkedIncomeId, v.createdBy);
+    }
+  });
+  (DB.income || []).forEach(inc => {
+    if (!inc.createdBy && visitIncomeMap.has(inc.id)) {
+      inc.createdBy = visitIncomeMap.get(inc.id);
+      if (!inc.receiver) inc.receiver = inc.createdBy;
+      incomeUpgraded = true;
+    }
+  });
+  if (incomeUpgraded) persist("income");
+
   DATA_VERSION++;
 }
 // جداول السجلات التى تحمل طابعًا زمنيًا (updatedAt) لكل عنصر فيها لأغراض حل
@@ -1665,9 +1688,15 @@ function syncLabExpenseTreasuryLink(rec, doctorName) {
 function visitIncomeDesc(rec, kind) {
   return `${kind === "dental" ? "زيارة أسنان" : "زيارة عيادة"} — ${rec.patient}${rec.fileNo ? " (ملف " + rec.fileNo + ")" : ""}`;
 }
+function isLinkedVisitIncome(inc) {
+  if (!inc) return false;
+  if (inc.receiptNo && String(inc.receiptNo).startsWith("V-")) return true;
+  return (DB.visitsClinic || []).some(v => v.linkedIncomeId === inc.id) || (DB.visitsDental || []).some(v => v.linkedIncomeId === inc.id);
+}
 function syncVisitIncomeLink(rec, kind, skipPersist) {
   const linked = rec.linkedIncomeId ? DB.income.find(x => x.id === rec.linkedIncomeId) : null;
   const paid = Number(rec.paid) || 0;
+  const creator = rec.createdBy || (currentUser ? currentUser.displayName : "") || "";
   if (paid > 0) {
     const desc = visitIncomeDesc(rec, kind);
     if (linked) {
@@ -1676,13 +1705,16 @@ function syncVisitIncomeLink(rec, kind, skipPersist) {
       linked.desc = desc;
       linked.amount = paid;
       linked.paymentMethod = rec.paymentMethod || linked.paymentMethod;
+      if (!linked.createdBy && creator) linked.createdBy = creator;
+      if (!linked.receiver && creator) linked.receiver = creator;
     } else {
       const inc = {
         id: uid(), date: rec.date || todayISO(), receiptNo: `V-${rec.fileNo || rec.id}`,
         party: rec.patient, category: kind === "dental" ? "أسنان" : "كشف", desc,
         paymentMethod: rec.paymentMethod || "نقدي", amount: paid,
-        receiver: currentUser ? currentUser.displayName : "", notes: "تم إنشاؤه تلقائيًا من سجل الزيارات",
+        receiver: creator, notes: "تم إنشاؤه تلقائيًا من سجل الزيارات",
         createdAt: rec.createdAt || nowISO(),
+        createdBy: creator,
       };
       DB.income.push(inc);
       rec.linkedIncomeId = inc.id;
@@ -2298,7 +2330,7 @@ setInterval(() => { if (STORAGE_MODE === "supabase" && !SYNC_PAUSED) flushPendin
 // المطبَّق فى storeGet)، ولا يُعيد رسم الشاشة إطلاقًا أثناء تعديل سجل قائم أو
 // كتابة نشطة فى أى حقل إدخال، تجنبًا لفقدان أى بيانات لم تُحفظ بعد.
 // ======================================================================
-const BACKGROUND_REFRESH_KEYS = ["doctors","employees","visitsClinic","visitsDental","income","expense","payroll","staffAccounts","categories","specialties","settings","labExpenses"];
+const BACKGROUND_REFRESH_KEYS = ["doctors","employees","visitsClinic","visitsDental","income","expense","payroll","staffAccounts","categories","specialties","settings","labExpenses","auditLog"];
 let BACKGROUND_REFRESH_IN_PROGRESS = false;
 function isUserActivelyTyping() {
   const el = document.activeElement;
@@ -3416,6 +3448,7 @@ function renderPatientFilesPage(kind) {
       id: uid(), date: todayISO(), fileNo: rec.fileNo || "", patient: rec.patient, phone: rec.phone,
       doctorId: rec.doctorId, examType: "متابعة", total: amount, paid: amount, status: "تم",
       notes: `تحصيل دفعة من مستحق زيارة ${rec.date || ""}`, nextVisitDate: null, createdAt: nowISO(),
+      createdBy: currentUser ? currentUser.displayName : null,
     };
     list.push(collectionVisit);
     syncVisitIncomeLink(collectionVisit, kindKey);
@@ -3482,6 +3515,7 @@ function renderPatientFilesPage(kind) {
         id: uid(), date: todayISO(), fileNo: g2.fileNos[0] || "", patient: g2.name, phone: g2.phone,
         doctorId: firstTouchedDoctorId, examType: "متابعة", total: amount, paid: amount, status: "تم",
         notes: `تحصيل دفعة من مستحقات قديمة (بدءًا من زيارة ${firstTouchedDate || ""})`, nextVisitDate: null, createdAt: nowISO(),
+        createdBy: currentUser ? currentUser.displayName : null,
       };
       collectionList.push(collectionVisit);
       syncVisitIncomeLink(collectionVisit, firstTouchedKindKey);
@@ -5732,71 +5766,231 @@ function renderPermissionsPage() {
 // قديمة (قبل إضافة هذه الميزة) لن تُنسَب لأي موظف تحديدًا فى هذا التقرير.
 function renderStaffPerformance() {
   const c = document.getElementById("content");
-  if (!state.staffPerformanceMonth) state.staffPerformanceMonth = todayISO().slice(0, 7);
   const visits = allVisits();
   const allDates = [
     ...visits.map(v => v.date), ...DB.income.map(x => x.date), ...DB.expense.map(x => x.date),
     ...DB.auditLog.map(a => a.date),
-  ];
+  ].filter(Boolean);
   const monthOptions = buildMonthOptions(allDates);
+
+  // اختيار ذكى للشهر: إن لم يكن محددًا، نختار الشهر الحالى إن كان به نشاط، وإلا نختار أحدث شهر متاح به بيانات
+  const currentMonthStr = todayISO().slice(0, 7);
+  if (!state.staffPerformanceMonth) {
+    const hasCurrentMonthData = allDates.some(d => String(d).startsWith(currentMonthStr));
+    state.staffPerformanceMonth = hasCurrentMonthData ? currentMonthStr : (monthOptions[0] || currentMonthStr);
+  }
   const selectedMonth = state.staffPerformanceMonth;
   const inMonth = d => selectedMonth === "all" || (d || "").startsWith(selectedMonth);
 
   const staffList = (DB.staffAccounts || []).filter(a => a.status !== "موقوف");
+  const staffNames = new Set(staffList.map(a => a.displayName).filter(Boolean));
+
+  // جميع زيارات الفترة المختارة
+  const periodVisits = visits.filter(v => inMonth(v.date));
+  // جميع قيود الوارد المباشرة بالفترة (التي لم تنشأ تلقائيًا من زيارة)
+  const periodDirectIncome = DB.income.filter(x => inMonth(x.date) && !isLinkedVisitIncome(x));
+  // جميع قيود المنصرف بالفترة
+  const periodExpense = DB.expense.filter(x => inMonth(x.date));
+
   const rows = staffList.map(a => {
     const name = a.displayName;
-    const clinicVisits = visits.filter(v => v.kind === "عيادات" && v.createdBy === name && inMonth(v.date));
-    const dentalVisits = visits.filter(v => v.kind === "أسنان" && v.createdBy === name && inMonth(v.date));
-    const incomeEntries = DB.income.filter(x => x.createdBy === name && inMonth(x.date));
-    const expenseEntries = DB.expense.filter(x => x.createdBy === name && inMonth(x.date));
-    const collected = incomeEntries.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    const clinicVisits = periodVisits.filter(v => v.kind === "عيادات" && v.createdBy === name);
+    const dentalVisits = periodVisits.filter(v => v.kind === "أسنان" && v.createdBy === name);
+    const staffVisits = [...clinicVisits, ...dentalVisits];
+
+    // إيرادات الزيارات المسجلة بواسطة هذا الموظف
+    const visitCollected = staffVisits.reduce((s, v) => s + (Number(v.paid) || 0), 0);
+    const visitPaidCount = staffVisits.filter(v => (Number(v.paid) || 0) > 0).length;
+
+    // قيود الوارد المباشرة المنسوبة لهذا الموظف
+    const directIncome = periodDirectIncome.filter(x => x.createdBy === name || (!x.createdBy && x.receiver === name));
+    const directCollected = directIncome.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    const directIncomeCount = directIncome.length;
+
+    // إجمالي التحصيل = متحصلات الزيارات + قيود الوارد المباشرة
+    const collected = visitCollected + directCollected;
+    const incomeCount = visitPaidCount + directIncomeCount;
+
+    // قيود المنصرف
+    const expenseEntries = periodExpense.filter(x => x.createdBy === name || (!x.createdBy && x.responsible === name));
     const spent = expenseEntries.reduce((s, x) => s + (Number(x.amount) || 0), 0);
-    const logins = DB.auditLog.filter(l => l.userName === name && l.action === "تسجيل دخول" && inMonth(l.date));
+    const expenseCount = expenseEntries.length;
+
+    // تسجيل الدخول
+    const logins = DB.auditLog.filter(l => (l.userName === name || l.userId === a.id) && l.action === "تسجيل دخول" && inMonth(l.date));
+
     return {
-      name, role: a.role,
+      name, role: a.role || "موظف", isUnassigned: false,
       clinicCount: clinicVisits.length, dentalCount: dentalVisits.length,
-      incomeCount: incomeEntries.length, collected,
-      expenseCount: expenseEntries.length, spent,
+      incomeCount, collected,
+      expenseCount, spent,
       loginCount: logins.length,
     };
-  }).filter(r => r.clinicCount + r.dentalCount + r.incomeCount + r.expenseCount + r.loginCount > 0)
-    .sort((a, b) => (b.clinicCount + b.dentalCount) - (a.clinicCount + a.dentalCount));
+  });
+
+  // تجميع السجلات غير المنسوبة (سجلات قديمة قبل ميزة التتبع أو بدون اسم موظف)
+  const unassignedVisits = periodVisits.filter(v => !v.createdBy || !staffNames.has(v.createdBy));
+  const unassignedClinic = unassignedVisits.filter(v => v.kind === "عيادات");
+  const unassignedDental = unassignedVisits.filter(v => v.kind === "أسنان");
+  const unassignedVisitCollected = unassignedVisits.reduce((s, v) => s + (Number(v.paid) || 0), 0);
+  const unassignedVisitPaidCount = unassignedVisits.filter(v => (Number(v.paid) || 0) > 0).length;
+
+  const unassignedDirectIncome = periodDirectIncome.filter(x => (!x.createdBy || !staffNames.has(x.createdBy)) && (!x.receiver || !staffNames.has(x.receiver)));
+  const unassignedDirectCollected = unassignedDirectIncome.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const unassignedDirectIncomeCount = unassignedDirectIncome.length;
+
+  const unassignedExpense = periodExpense.filter(x => (!x.createdBy || !staffNames.has(x.createdBy)) && (!x.responsible || !staffNames.has(x.responsible)));
+  const unassignedSpent = unassignedExpense.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+
+  const hasUnassigned = (unassignedClinic.length + unassignedDental.length + unassignedDirectIncomeCount + unassignedExpense.length + unassignedVisitCollected + unassignedDirectCollected + unassignedSpent) > 0;
+
+  if (hasUnassigned) {
+    rows.push({
+      name: "سجلات سابقة / غير منسوبة لموظف",
+      role: "تاريخي",
+      isUnassigned: true,
+      clinicCount: unassignedClinic.length,
+      dentalCount: unassignedDental.length,
+      incomeCount: unassignedVisitPaidCount + unassignedDirectIncomeCount,
+      collected: unassignedVisitCollected + unassignedDirectCollected,
+      expenseCount: unassignedExpense.length,
+      spent: unassignedSpent,
+      loginCount: 0,
+    });
+  }
+
+  // ترتيب الموظفين حسب إجمالي النشاط مع بقاء السجلات غير المنسوبة فى النهاية دائمًا
+  rows.sort((a, b) => {
+    if (a.isUnassigned) return 1;
+    if (b.isUnassigned) return -1;
+    return (b.clinicCount + b.dentalCount + b.incomeCount + b.expenseCount) - (a.clinicCount + a.dentalCount + a.incomeCount + a.expenseCount);
+  });
+
+  // حساب المجاميع الإجمالية للفترة (تطابق الخزينة والإقفال بنسبة 100%)
+  const totals = rows.reduce((s, r) => ({
+    clinic: s.clinic + r.clinicCount,
+    dental: s.dental + r.dentalCount,
+    incomeCount: s.incomeCount + r.incomeCount,
+    collected: s.collected + r.collected,
+    expenseCount: s.expenseCount + r.expenseCount,
+    spent: s.spent + r.spent,
+    logins: s.logins + r.loginCount,
+  }), { clinic: 0, dental: 0, incomeCount: 0, collected: 0, expenseCount: 0, spent: 0, logins: 0 });
+
+  const activeStaffCount = rows.filter(r => !r.isUnassigned && (r.clinicCount + r.dentalCount + r.incomeCount + r.expenseCount + r.loginCount > 0)).length;
 
   c.innerHTML = `
     <div class="card" style="margin-bottom:16px;">
-      <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
-        <span>أداء الموظفين</span>
-        <select id="staffPerfMonthSelect" style="padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:var(--input-bg); color:var(--ink);">
-          ${monthOptions.map(m => `<option value="${m}" ${selectedMonth === m ? "selected" : ""}>${m}</option>`).join("")}
-          <option value="all" ${selectedMonth === "all" ? "selected" : ""}>كل الفترات</option>
-        </select>
+      <div class="section-title" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span>👥 أداء ونشاط الموظفين</span>
+          <span class="hint">(${selectedMonth === "all" ? "كل الفترات" : selectedMonth})</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <select id="staffPerfMonthSelect" style="padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:var(--input-bg); color:var(--ink); font-weight:600;">
+            ${monthOptions.map(m => `<option value="${m}" ${selectedMonth === m ? "selected" : ""}>${m}</option>`).join("")}
+            <option value="all" ${selectedMonth === "all" ? "selected" : ""}>كل الفترات (سجل شامل)</option>
+          </select>
+          <button class="btn sm ghost" id="repairStaffMetaBtn" title="تحديث وتصحيح ربط السجلات القديمة بأسماء محرريها">🔄 تدقيق السجلات</button>
+        </div>
       </div>
-      <p class="hint">مبنى على السجلات التى تحمل اسم الموظف اللى سجّلها فعليًا - السجلات القديمة (قبل إضافة هذه الميزة) لن تظهر منسوبة لأى موظف.</p>
+      <p class="hint" style="margin-top:4px;">
+        يُحسب التحصيل من كافة الزيارات التي سجّلها الموظف (عيادات وأسنان) بالإضافة لقيود الوارد المباشرة. السجلات السابقة قبل تفعيل الميزة تظهر مجمعة بصف مستقل للحفاظ على تطابق الخزينة.
+      </p>
+    </div>
+
+    <div class="grid grid-4" style="margin-bottom:16px;">
+      <div class="card kpi">
+        <div class="label">إجمالي الزيارات المسجلة</div>
+        <div class="value">${fmtInt(totals.clinic + totals.dental)}</div>
+        <div class="delta">${fmtInt(totals.clinic)} عيادات · ${fmtInt(totals.dental)} أسنان</div>
+      </div>
+      <div class="card kpi">
+        <div class="label">إجمالي المبالغ المحصلة</div>
+        <div class="value income">${fmt(totals.collected)} ج.م</div>
+        <div class="delta">${fmtInt(totals.incomeCount)} حركة تحصيل مسجلة</div>
+      </div>
+      <div class="card kpi">
+        <div class="label">إجمالي المنصرف المسجل</div>
+        <div class="value expense">${fmt(totals.spent)} ج.م</div>
+        <div class="delta">${fmtInt(totals.expenseCount)} سند صرف</div>
+      </div>
+      <div class="card kpi">
+        <div class="label">الموظفون المتفاعلون</div>
+        <div class="value">${fmtInt(activeStaffCount)} <span style="font-size:14px; font-weight:normal; color:var(--muted);">/ ${staffList.length}</span></div>
+        <div class="delta">${fmtInt(totals.logins)} تسجيل دخول بالنظام</div>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="table-wrap"><table>
         <thead><tr>
           <th>الموظف</th><th>الدور</th><th>زيارات عيادات</th><th>زيارات أسنان</th>
-          <th>قيود وارد</th><th>إجمالى محصَّل</th><th>قيود منصرف</th><th>إجمالى مصروف</th><th>عدد الدخول</th>
+          <th>حركات التحصيل</th><th>إجمالى محصَّل</th><th>قيود منصرف</th><th>إجمالى مصروف</th><th>مرات الدخول</th>
         </tr></thead>
         <tbody>
-          ${rows.length === 0 ? `<tr class="empty-row"><td colspan="9">لا يوجد نشاط منسوب لأى موظف فى هذه الفترة</td></tr>` : rows.map(r => `
-            <tr>
-              <td style="font-weight:700;">${esc(r.name)}</td>
-              <td>${esc(r.role)}</td>
-              <td>${fmtInt(r.clinicCount)}</td>
-              <td>${fmtInt(r.dentalCount)}</td>
-              <td>${fmtInt(r.incomeCount)}</td>
-              <td class="income">${fmt(r.collected)}</td>
-              <td>${fmtInt(r.expenseCount)}</td>
-              <td class="expense">${fmt(r.spent)}</td>
-              <td>${fmtInt(r.loginCount)}</td>
+          ${rows.length === 0 ? `<tr class="empty-row"><td colspan="9">لا يوجد نشاط مسجل فى هذه الفترة</td></tr>` : rows.map(r => `
+            <tr style="${r.isUnassigned ? "background:rgba(199,154,62,0.06); color:var(--muted);" : ""}">
+              <td style="font-weight:700;">
+                ${esc(r.name)}
+                ${r.isUnassigned ? ` <span class="hint" style="font-size:11px; color:var(--gold);">⚠️ بدون اسم محرر</span>` : ""}
+              </td>
+              <td><span class="pill ${r.isUnassigned ? "" : r.role === "مدير" ? "paid" : "partial"}">${esc(r.role)}</span></td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(r.clinicCount)}</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(r.dentalCount)}</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(r.incomeCount)}</td>
+              <td class="income" style="font-variant-numeric:tabular-nums; font-weight:700;">${fmt(r.collected)} ج.م</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(r.expenseCount)}</td>
+              <td class="expense" style="font-variant-numeric:tabular-nums;">${fmt(r.spent)} ج.م</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(r.loginCount)}</td>
             </tr>`).join("")}
         </tbody>
+        ${rows.length > 0 ? `
+          <tfoot>
+            <tr style="font-weight:bold; background:var(--row-hover); border-top:2px solid var(--line);">
+              <td>المجموع الإجمالي</td>
+              <td>-</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(totals.clinic)}</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(totals.dental)}</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(totals.incomeCount)}</td>
+              <td class="income" style="font-variant-numeric:tabular-nums; font-weight:900;">${fmt(totals.collected)} ج.م</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(totals.expenseCount)}</td>
+              <td class="expense" style="font-variant-numeric:tabular-nums; font-weight:900;">${fmt(totals.spent)} ج.م</td>
+              <td style="font-variant-numeric:tabular-nums;">${fmtInt(totals.logins)}</td>
+            </tr>
+          </tfoot>
+        ` : ""}
       </table></div>
     </div>
   `;
+
   const staffPerfMonthSelect = document.getElementById("staffPerfMonthSelect");
   if (staffPerfMonthSelect) staffPerfMonthSelect.addEventListener("change", () => {
     state.staffPerformanceMonth = staffPerfMonthSelect.value; route();
+  });
+
+  const repairBtn = document.getElementById("repairStaffMetaBtn");
+  if (repairBtn) repairBtn.addEventListener("click", async () => {
+    let count = 0;
+    const allV = allVisits();
+    const vMap = new Map();
+    allV.forEach(v => {
+      if (v.linkedIncomeId && v.createdBy) vMap.set(v.linkedIncomeId, v.createdBy);
+    });
+    (DB.income || []).forEach(inc => {
+      if (!inc.createdBy && vMap.has(inc.id)) {
+        inc.createdBy = vMap.get(inc.id);
+        if (!inc.receiver) inc.receiver = inc.createdBy;
+        count++;
+      }
+    });
+    if (count > 0) {
+      await persist("income");
+      showToast(`✅ تم تحديث وربط ${count} قيد وارد قديم بأسماء محرريها بنجاح`);
+    } else {
+      showToast(`ℹ️ جميع السجلات محدثة ومربوطة بالكامل`);
+    }
+    route();
   });
 }
 function renderAuditLogPage() {

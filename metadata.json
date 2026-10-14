@@ -1,0 +1,7 @@
+{
+  "name": "نظام إدارة مجمع ميت عزون الطبي",
+  "description": "نظام إدارة مجمع ميت عزون الطبي - جمعية تنمية المجتمع",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
