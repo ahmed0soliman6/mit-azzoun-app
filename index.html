@@ -872,6 +872,9 @@ async function clearDeletedQueue(tableKey, idsToRemove) {
   } catch (e) { /* ignore */ }
 }
 async function executeRecordDeletion(tableKey, id) {
+  return runTableSync(tableKey, () => executeRecordDeletionInner(tableKey, id));
+}
+async function executeRecordDeletionInner(tableKey, id) {
   if (!tableKey || !id) return;
   markIdAsDeleted(id);
   await queueDeletion(tableKey, id);
@@ -1081,6 +1084,70 @@ function markTableLocallyChanged(key) {
   TABLE_SYNC_GENERATIONS[key] = getTableSyncGeneration(key) + 1;
   return TABLE_SYNC_GENERATIONS[key];
 }
+// منفذ واحد لكل جدول: الحفظ، السحب الخلفي وRealtime لا يكتبون الحالة نفسها
+// بالتوازي. هذا القفل ليس قفل شبكة؛ هو ترتيب محلي يمنع النتيجة الأقدم من
+// الكتابة بعد النتيجة الأحدث.
+const TABLE_SYNC_QUEUES = Object.create(null);
+function runTableSync(key, work) {
+  const previous = TABLE_SYNC_QUEUES[key] || Promise.resolve();
+  const run = previous.catch(() => {}).then(work);
+  TABLE_SYNC_QUEUES[key] = run;
+  return run;
+}
+
+// السجلات هنا أُنشئت/عُدلت محليًا ولم تُؤكّد بعد برسالة Realtime أو قراءة
+// سحابية تحتوي النسخة نفسها. لا يجوز لغيابها من لقطة REST أن يحذفها.
+const LOCAL_PENDING_RECORDS = Object.create(null);
+function pendingRecordsFor(key) {
+  if (!LOCAL_PENDING_RECORDS[key]) LOCAL_PENDING_RECORDS[key] = new Map();
+  return LOCAL_PENDING_RECORDS[key];
+}
+async function markLocalChangesPending(key, rows) {
+  if (!Array.isArray(rows) || !SB_TABLES[key]) return;
+  const baseline = await readSyncBaseline(key);
+  const baseMap = new Map((baseline || []).map(r => [r.id, r]));
+  const pending = pendingRecordsFor(key);
+  for (const row of rows) {
+    if (!row || !row.id || isIdDeleted(row.id)) continue;
+    const base = baseMap.get(row.id);
+    if (!base || !recordsEqual(base, row)) pending.set(row.id, { updatedAt: row.updatedAt || "" });
+  }
+}
+function remoteConfirmsLocal(local, remote) {
+  return !!(local && remote && recordsEqual(local, remote));
+}
+async function mergeRemoteSnapshot(key, remoteRows) {
+  if (!Array.isArray(remoteRows)) return remoteRows;
+  const cached = await readLocalCache(key, []);
+  const localRows = Array.isArray(DB[key]) && DB[key].length ? DB[key] : (Array.isArray(cached) ? cached : []);
+  const pending = pendingRecordsFor(key);
+  const remoteMap = new Map(remoteRows.filter(r => r && r.id).map(r => [r.id, r]));
+  const mergedMap = new Map();
+
+  for (const local of localRows) {
+    if (!local || !local.id || isIdDeleted(local.id)) continue;
+    const remote = remoteMap.get(local.id);
+    if (!remote) {
+      // غياب السجل في أي لقطة ليس دليل حذف. الحذف فقط عبر tombstone/DELETE.
+      mergedMap.set(local.id, local);
+      continue;
+    }
+    if (pending.has(local.id)) {
+      if (remoteConfirmsLocal(local, remote)) pending.delete(local.id);
+      else { mergedMap.set(local.id, local); continue; }
+    }
+    const localTime = local.updatedAt || "";
+    const remoteTime = remote.updatedAt || "";
+    mergedMap.set(local.id, remoteTime >= localTime ? remote : local);
+  }
+  for (const remote of remoteRows) {
+    if (remote && remote.id && !isIdDeleted(remote.id) && !mergedMap.has(remote.id)) mergedMap.set(remote.id, remote);
+  }
+  const merged = Array.from(mergedMap.values());
+  DB[key] = merged;
+  await cacheLocally(key, merged);
+  return merged;
+}
 function snapshotForSync(value) {
   // بيانات التطبيق JSON-serializable؛ اللقطة تمنع تعديل المصفوفة نفسها
   // أثناء انتظار دورها في STORE_SET_QUEUES.
@@ -1089,6 +1156,9 @@ function snapshotForSync(value) {
 }
 
 async function storeGet(key, fallback) {
+  return runTableSync(key, () => storeGetInner(key, fallback));
+}
+async function storeGetInner(key, fallback) {
   try {
     if (STORAGE_MODE === "supabase") {
       // إصلاح مشكلة "فقدان تعديلات وضع عدم الاتصال بعد تسجيل الدخول من جديد":
@@ -1101,10 +1171,6 @@ async function storeGet(key, fallback) {
       // المطموسة فيرفعها كما هى (لا شىء تغيّر فعليًا) ويُعلِّم الجدول "تم" رغم أن
       // التعديل الحقيقى (مثلًا طبيب جديد أو تعديل مهلة الإغلاق) ضاع تمامًا. هذا
       // بالضبط ما كان يحدث عند تسجيل الخروج ثم الدخول من نفس الجهاز بعد عودة الاتصال.
-      if (navigator.onLine && !SYNC_PAUSED) {
-        const pendingNow = await getPendingQueueKeys();
-        if (pendingNow.includes(key)) await flushPendingSync();
-      }
       // إن كان الجدول ما زال معلّقًا فى الطابور (فشل الرفع أعلاه رغم وجود اتصال:
       // خطأ شبكة عابر، رفض من الخادم...)، لا تسحب نسخة السحابة مباشرة إطلاقًا -
       // فهذا سيُعيد إنتاج نفس مشكلة الطمس. اكتفِ بإرجاع النسخة المحلية الحالية
@@ -1132,10 +1198,15 @@ async function storeGet(key, fallback) {
               const current = DB[key] !== undefined ? DB[key] : await readLocalCache(key, fallback);
               return Array.isArray(current) ? current.filter(r => r && r.id && !isIdDeleted(r.id)) : current;
             }
-            const delQueue = await getDeletedQueue(key);
-            const delSet = new Set(delQueue);
             if (Array.isArray(result)) {
+              const delQueue = await getDeletedQueue(key);
+              const delSet = new Set(delQueue);
               result = result.filter(r => r && r.id && !delSet.has(r.id) && !isIdDeleted(r.id));
+              // لا تستبدل القائمة المحلية بل ادمجها. السجل المحلي المعلّق يبقى
+              // ظاهرًا حتى تؤكده لقطة سحابية مطابقة أو حدث Realtime.
+              const merged = await mergeRemoteSnapshot(key, result);
+              if (SB_TABLES[key] && key !== "auditLog") await writeSyncBaseline(key, result);
+              return merged;
             }
             await cacheLocally(key, result);
             if (SB_TABLES[key] && key !== "auditLog") await writeSyncBaseline(key, result); // نقطة توافق معروفة بين المحلى والسحابى
@@ -1174,13 +1245,9 @@ async function storeGet(key, fallback) {
 // الحل: طابور تنفيذ منفصل لكل جدول - أى استدعاء storeSet لجدول معيّن ينتظر
 // اكتمال الاستدعاء السابق لنفس الجدول قبل ما يبدأ، فلا يحدث تسابق بينهم أبدًا،
 // ويبقى ترتيب الكتابة النهائية مطابقًا لترتيب الحفظ الفعلى دايمًا.
-const STORE_SET_QUEUES = {};
 function storeSet(key, value) {
   const snapshot = snapshotForSync(value);
-  const prev = STORE_SET_QUEUES[key] || Promise.resolve();
-  const run = prev.catch(() => {}).then(() => storeSetInner(key, snapshot));
-  STORE_SET_QUEUES[key] = run;
-  return run;
+  return runTableSync(key, () => storeSetInner(key, snapshot));
 }
 async function storeSetInner(key, value) {
   try {
@@ -1721,6 +1788,9 @@ async function persist(key) {
   markTableLocallyChanged(key);
   try {
     await stampChangedRecords(key, DB[key]);
+    // قبل أي await آخر في الرفع، علّم السجلات المعدّلة كنسخ محلية محمية.
+    // هذا يمنع أي سحب/Realtime أقدم من إخفائها.
+    await markLocalChangesPending(key, DB[key]);
     const map = {
       doctors: DB.doctors, employees: DB.employees, visitsClinic: DB.visitsClinic,
       visitsDental: DB.visitsDental, income: DB.income, expense: DB.expense,
@@ -2928,7 +2998,14 @@ async function backgroundRefreshAll() {
         const fresh = await storeGet(key, DB[key]);
         // لا تطبّق نتيجة طلب بدأ قبل تعديل محلي، حتى لو انتهى بعده.
         if (getTableSyncGeneration(key) !== generationBeforeRefresh) continue;
-        if (fresh !== undefined && JSON.stringify(fresh) !== before) { DB[key] = fresh; changed = true; }
+        // جداول السجلات دُمجت وكتبت داخل القفل في storeGet؛ لا تكتبها ثانية
+        // بعد خروج القفل لأن حفظًا أحدث قد يكون بدأ في الفاصل القصير.
+        if (Array.isArray(fresh)) {
+          if (JSON.stringify(DB[key]) !== before) changed = true;
+        } else if (fresh !== undefined && JSON.stringify(fresh) !== before) {
+          DB[key] = fresh;
+          changed = true;
+        }
       } catch (e) { /* تجاهل فشل جدول واحد ولا يوقف تحديث الباقى */ }
     }
     // أعد التحقق مباشرة قبل إعادة الرسم: قد يكون المستخدم بدأ الكتابة أو حفظ تعديل جديد أثناء عملية السحب نفسها
@@ -7134,7 +7211,11 @@ const SQL_TABLE_TO_DB_KEY = {
 };
 
 let universalRealtimeChannel = null;
-async function handleUniversalRealtimePayload(payload, dbKey) {
+function handleUniversalRealtimePayload(payload, dbKey) {
+  if (!payload || !dbKey) return Promise.resolve();
+  return runTableSync(dbKey, () => handleUniversalRealtimePayloadInner(payload, dbKey));
+}
+async function handleUniversalRealtimePayloadInner(payload, dbKey) {
   if (!payload || !dbKey) return;
   const event = payload.eventType; // "INSERT", "UPDATE", "DELETE"
   
@@ -7185,18 +7266,17 @@ async function handleUniversalRealtimePayload(payload, dbKey) {
     }
 
     if (Array.isArray(DB[dbKey])) {
-      const exists = DB[dbKey].some(r => r && r.id === item.id);
-      if (!exists) {
-        DB[dbKey].push(item);
-        await cacheLocally(dbKey, DB[dbKey]);
-        const base = await readSyncBaseline(dbKey);
-        if (Array.isArray(base)) {
-          await writeSyncBaseline(dbKey, [...base, item]);
-        }
+      const before = JSON.stringify(DB[dbKey]);
+      await mergeRemoteSnapshot(dbKey, [item]);
+      const base = await readSyncBaseline(dbKey);
+      if (Array.isArray(base)) {
+        const bIdx = base.findIndex(r => r && r.id === item.id);
+        if (bIdx > -1) base[bIdx] = item; else base.push(item);
+        await writeSyncBaseline(dbKey, base);
+      }
+      if (JSON.stringify(DB[dbKey]) !== before) {
         DATA_VERSION++;
-        if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
-          route();
-        }
+        if (currentUser && !isMidEdit() && !isUserActivelyTyping()) route();
       }
     }
     return;
@@ -7218,25 +7298,18 @@ async function handleUniversalRealtimePayload(payload, dbKey) {
     }
 
     if (Array.isArray(DB[dbKey])) {
-      const idx = DB[dbKey].findIndex(r => r && r.id === item.id);
-      if (idx > -1) {
-        if (state.editId === item.id || state.editDocId === item.id || state.editUserId === item.id || state.editEmpId === item.id) return;
-        const local = DB[dbKey][idx];
-        // قد يصل حدث UPDATE المتولد عن رفع سابق بعد أن عدّل المستخدم السجل
-        // مرة أخرى. لا يسمح للحدث الأقدم بالرجوع بالذاكرة إلى الوراء.
-        if ((local.updatedAt || "") > (item.updatedAt || "")) return;
-        DB[dbKey][idx] = Object.assign({}, DB[dbKey][idx], item);
-        await cacheLocally(dbKey, DB[dbKey]);
-        const base = await readSyncBaseline(dbKey);
-        if (Array.isArray(base)) {
-          const bIdx = base.findIndex(r => r && r.id === item.id);
-          if (bIdx > -1) base[bIdx] = item; else base.push(item);
-          await writeSyncBaseline(dbKey, base);
-        }
+      if (state.editId === item.id || state.editDocId === item.id || state.editUserId === item.id || state.editEmpId === item.id) return;
+      const before = JSON.stringify(DB[dbKey]);
+      await mergeRemoteSnapshot(dbKey, [item]);
+      const base = await readSyncBaseline(dbKey);
+      if (Array.isArray(base)) {
+        const bIdx = base.findIndex(r => r && r.id === item.id);
+        if (bIdx > -1) base[bIdx] = item; else base.push(item);
+        await writeSyncBaseline(dbKey, base);
+      }
+      if (JSON.stringify(DB[dbKey]) !== before) {
         DATA_VERSION++;
-        if (currentUser && !isMidEdit() && !isUserActivelyTyping()) {
-          route();
-        }
+        if (currentUser && !isMidEdit() && !isUserActivelyTyping()) route();
       }
     }
     return;
