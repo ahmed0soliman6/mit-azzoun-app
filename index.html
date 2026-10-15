@@ -1245,8 +1245,8 @@ async function mergeRemoteSnapshot(key, remoteRows) {
     if (!local || !local.id || isIdDeleted(local.id)) continue;
     const remote = remoteMap.get(local.id);
     if (!remote) {
-      // السجل غير المؤكد محليًا أو غائب عن لقطة جزئية لا يُحذف.
-      if (pending.has(local.id) || !baselineMap.has(local.id) || !isFullSnapshot) {
+      // السجل غير المؤكد محليًا أو غائب عن لقطة جزئية أو أثناء عملية حفظ جارية لا يُحذف.
+      if (pending.has(local.id) || !baselineMap.has(local.id) || !isFullSnapshot || PENDING_WRITES > 0) {
         mergedMap.set(local.id, local);
       }
       // أما إذا كانت لقطة كاملة حقيقية والسجل مؤكد سابقًا واختفى، فهو حذف خادمي
@@ -1838,6 +1838,22 @@ async function loadAll() {
         if (a.permissions[m.key][act.key] === undefined) { a.permissions[m.key][act.key] = true; upgraded = true; }
       });
     });
+    // ترقية أمان تشغيلية: الحسابات النشطة للموظفين التي لم تُضبط صلاحياتها تفصيليًا
+    // وتملك قيم false كحد افتراضي في الأقسام التشغيلية (المنصرف، المرتبات، الوارد)
+    // نمنحها صلاحية (عرض/إضافة/تعديل) تلقائيًا حتى لا تُحجب البيانات عند دخول الموظف.
+    if (a.role === "موظف" && a.status !== "موقوف") {
+      const opKeys = ["expense", "income", "payroll", "clinic", "dental"];
+      for (const k of opKeys) {
+        if (a.permissions[k]) {
+          if (a.permissions[k].view === false && a.permissions[k].add === false) {
+            a.permissions[k].view = true;
+            a.permissions[k].add = true;
+            a.permissions[k].edit = true;
+            upgraded = true;
+          }
+        }
+      }
+    }
   });
   if (upgraded) persist("staffAccounts");
 
@@ -2327,7 +2343,7 @@ function payrollPaidAmount(rec) {
 // تعديل لاحق، ويحذفها تمامًا لو أصبح المدفوع فعليًا صفرًا (حالة "مؤجل") - لتفادى
 // الإدخال المزدوج (مرة فى المرتبات ومرة يدويًا فى المنصرف) مع الحفاظ على دقة
 // رصيد الخزينة (لا يدخلها إلا ما خرج فعلًا، لا أكثر ولا أقل).
-function syncPayrollExpenseLink(rec, skipPersist) {
+async function syncPayrollExpenseLink(rec, skipPersist) {
   const linked = rec.linkedExpenseId ? DB.expense.find(x => x.id === rec.linkedExpenseId) : null;
   const paidNow = payrollPaidAmount(rec);
   const creator = currentUser ? currentUser.displayName : "";
@@ -2351,17 +2367,17 @@ function syncPayrollExpenseLink(rec, skipPersist) {
       DB.expense.push(exp);
       rec.linkedExpenseId = exp.id;
     }
-    if (!skipPersist) persist("expense");
+    if (!skipPersist) await persist("expense");
   } else if (linked) {
     const removedExpId = linked.id;
     const idx = DB.expense.findIndex(x => x.id === removedExpId);
     if (idx > -1) DB.expense.splice(idx, 1);
     rec.linkedExpenseId = null;
     executeRecordDeletion("expense", removedExpId);
-    if (!skipPersist) persist("expense");
+    if (!skipPersist) await persist("expense");
   }
 }
-function syncLabExpenseTreasuryLink(rec, doctorName, skipPersist) {
+async function syncLabExpenseTreasuryLink(rec, doctorName, skipPersist) {
   const linked = rec.linkedExpenseId ? DB.expense.find(x => x.id === rec.linkedExpenseId) : null;
   const amount = Number(rec.amount) || 0;
   const creator = currentUser ? currentUser.displayName : "";
@@ -2383,14 +2399,14 @@ function syncLabExpenseTreasuryLink(rec, doctorName, skipPersist) {
       DB.expense.push(exp);
       rec.linkedExpenseId = exp.id;
     }
-    if (!skipPersist) persist("expense");
+    if (!skipPersist) await persist("expense");
   } else if (linked) {
     const removedExpId = linked.id;
     const idx = DB.expense.findIndex(x => x.id === removedExpId);
     if (idx > -1) DB.expense.splice(idx, 1);
     rec.linkedExpenseId = null;
     executeRecordDeletion("expense", removedExpId);
-    if (!skipPersist) persist("expense");
+    if (!skipPersist) await persist("expense");
   }
 }
 // يربط زيارة (عيادة أو أسنان) بها مبلغ محصَّل فعليًا ("المدفوع" أكبر من صفر) تلقائيًا
@@ -4903,7 +4919,7 @@ function renderMoneyPage(kind) {
         <div class="field" style="grid-column:span 2;"><label>البيان</label><input type="text" name="desc" value="${esc(editing?.desc)}"></div>
         <div class="field"><label>طريقة الدفع</label><select name="paymentMethod">${option(LISTS.payMethods, editing?.paymentMethod)}</select></div>
         <div class="field"><label>المبلغ</label><input type="text" inputmode="decimal" step="0.01" min="0" name="amount" required value="${editing?.amount ?? ""}"></div>
-        <div class="field"><label>${personLabel}</label><input type="text" name="person" value="${esc(editing?.[isIncome ? "receiver" : "responsible"])}"></div>
+        <div class="field"><label>${personLabel}</label><input type="text" name="person" value="${esc(editing ? editing[isIncome ? "receiver" : "responsible"] : (currentUser ? currentUser.displayName : ""))}"></div>
         ${(() => {
           if (!isIncome) return "";
           // إصلاح أمان بيانات: القيود اللى تُنشأ تلقائيًا من سجل زيارة (receiptNo
@@ -5041,7 +5057,7 @@ function renderMoneyPage(kind) {
       desc: fd.get("desc"), paymentMethod: fd.get("paymentMethod"), amount: Number(fd.get("amount")) || 0,
       notes: fd.get("notes"),
       createdAt: editing ? (editing.createdAt || null) : nowISO(),
-      createdBy: editing ? (editing.createdBy || null) : (currentUser ? currentUser.displayName : null),
+      createdBy: editing ? (editing.createdBy || (currentUser ? currentUser.displayName : null)) : (currentUser ? currentUser.displayName : null),
     };
     if (isIncome) {
       const isAutoLinkedVisit = editing && editing.receiptNo && String(editing.receiptNo).startsWith("V-");
@@ -5060,7 +5076,7 @@ function renderMoneyPage(kind) {
         rec.docShare = null; rec.clinicShare = null;
       }
     }
-    rec[isIncome ? "receiver" : "responsible"] = fd.get("person");
+    rec[isIncome ? "receiver" : "responsible"] = fd.get("person") || (currentUser ? currentUser.displayName : "");
     if (editing) {
       const idx = list.findIndex(v => v.id === editing.id);
       list[idx] = rec;
@@ -5394,12 +5410,11 @@ function renderPayroll() {
     // - وهو ما يجعل استخدام "جزئي" بلا فائدة ويُربك من يراجع "المستحقات" لاحقًا.
     if (status === "جزئي" && paidAmount <= 0) { showToast("⚠️ من فضلك أدخل المبلغ المدفوع فعليًا لحالة \"جزئي\""); return; }
     if (status === "جزئي" && paidAmount >= amount) { showToast("⚠️ المبلغ المدفوع فعليًا يجب أن يكون أقل من إجمالى المبلغ - استخدم حالة \"تم\" لو دُفع بالكامل"); return; }
-    const rec = { id: editing ? editing.id : uid(), month: fd.get("month"), day: fd.get("day") ? Number(fd.get("day")) : null, name: fd.get("name"), type: fd.get("type"), amount, status, paidAmount: status === "جزئي" ? paidAmount : null, notes: fd.get("notes"), linkedExpenseId: editing ? (editing.linkedExpenseId || null) : null, createdAt: editing ? (editing.createdAt || null) : nowISO() };
+    const rec = { id: editing ? editing.id : uid(), month: fd.get("month"), day: fd.get("day") ? Number(fd.get("day")) : null, name: fd.get("name"), type: fd.get("type"), amount, status, paidAmount: status === "جزئي" ? paidAmount : null, notes: fd.get("notes"), linkedExpenseId: editing ? (editing.linkedExpenseId || null) : null, createdAt: editing ? (editing.createdAt || null) : nowISO(), createdBy: editing ? (editing.createdBy || (currentUser ? currentUser.displayName : null)) : (currentUser ? currentUser.displayName : null) };
+    const oldRec = editing ? { ...editing } : null;
     if (editing) { list[list.findIndex(v => v.id === editing.id)] = rec; } else { list.push(rec); }
-    syncPayrollExpenseLink(rec);
-    // إصلاح جوهري (نفس إصلاح الوارد/المنصرف والعيادات): ننتظر persist() فعليًا
-    // قبل route() بدل إطلاقها بدون انتظار، حتى لا يقرأ أى تحديث خلفى نسخة سحابية
-    // قديمة لم يصلها هذا القيد بعد فيختفى مؤقتًا.
+    await syncPayrollExpenseLink(rec);
+    logActivity(editing ? "تعديل سجل مرتبات" : "إضافة سجل مرتبات", "payroll", oldRec, rec);
     let pushFailedOnline = false;
     try {
       await persist("payroll");
@@ -5407,7 +5422,7 @@ function renderPayroll() {
       console.error("Payroll entry sync push failed (saved locally, will retry):", err);
       pushFailedOnline = true;
     }
-    state.editId = null; state.payrollMonth = rec.month || state.payrollMonth;
+    state.editId = null; state.payrollMonth = rec.month || state.payrollMonth; state.tablePage.payroll = 1;
     if (pushFailedOnline) {
       showToast("💾 تم الحفظ محليًا — تعذّر رفعه للسحابة الآن وسيُعاد رفعه تلقائيًا عند توفر الاتصال", 3800);
     } else {
