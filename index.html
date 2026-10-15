@@ -1181,6 +1181,14 @@ async function markLocalChangesPending(key, rows) {
     if (!base || !recordsEqual(base, row)) pending.set(row.id, { updatedAt: row.updatedAt || "" });
   }
 }
+function clearPendingRecords(key, ids) {
+  const map = pendingRecordsFor(key);
+  if (!map) return;
+  if (!ids) { map.clear(); return; }
+  for (const id of ids) {
+    if (id) map.delete(id);
+  }
+}
 function remoteConfirmsLocal(local, remote) {
   return !!(local && remote && recordsEqual(local, remote));
 }
@@ -1395,9 +1403,9 @@ async function storeSetInner(key, value) {
           const finalDbList = Array.from(currentLocalMap.values()).filter(r => r && r.id && !isIdDeleted(r.id));
           DB[key] = finalDbList;
           await cacheLocally(key, finalDbList);
-          // خط الأساس يجب أن يعكس فقط ما أكده هذا الطلب، لا ما أُضيف محليًا
-          // أثناء انتظاره؛ وإلا قد تُعامل الإضافة الحديثة خطأً كأنها وصلت للسحابة.
           await writeSyncBaseline(key, cleanMerged);
+          clearPendingRecords(key, (value || []).map(r => r && r.id).filter(Boolean));
+          clearPendingRecords(key, cleanMerged.map(r => r && r.id).filter(Boolean));
         }
         await unqueueTable(key);
       } catch (e) {
@@ -4321,10 +4329,10 @@ function renderVisitsPage(kind) {
     // > 0 طوال مدة هذا الانتظار، وهو ما يحمى منه backgroundRefreshAll أعلاه أيضًا.
     let pushFailedOnline = false;
     try {
-      await Promise.all([
-        persist(isDental ? "visitsDental" : "visitsClinic"),
-        persist("income")
-      ]);
+      if (rec.linkedIncomeId) {
+        await persist("income");
+      }
+      await persist(isDental ? "visitsDental" : "visitsClinic");
     } catch (err) {
       // فشل الرفع الفورى للسحابة رغم وجود اتصال (خطأ شبكة عابر، رفض من الخادم...).
       // البيانات محفوظة محليًا بالفعل وأُضيفت لطابور إعادة المحاولة التلقائية
@@ -4334,6 +4342,11 @@ function renderVisitsPage(kind) {
       pushFailedOnline = true;
     }
     state.editId = null;
+    state.tablePage[`visits_${kind}`] = 1;
+    if (state[`visitFilterGran_${kind}`] && state[`visitFilterGran_${kind}`] !== "all") {
+      state[`visitFilterGran_${kind}`] = "all";
+      state[`visitFilterVal_${kind}`] = null;
+    }
     if (pushFailedOnline) {
       showToast(`💾 ${editing ? "تم حفظ التعديل" : "تم تسجيل الزيارة"} محليًا — تعذّر رفعه للسحابة الآن وسيُعاد رفعه تلقائيًا عند توفر الاتصال`, 3800);
     } else {
@@ -5022,7 +5035,9 @@ function renderMoneyPage(kind) {
     const fd = new FormData(e.target);
     const rec = {
       id: editing ? editing.id : uid(),
-      date: fd.get("date"), [numField]: editing ? editing[numField] : null, party: fd.get("party"), category: fd.get("category"),
+      date: fd.get("date"),
+      [numField]: editing ? editing[numField] : (isIncome ? ("R-" + uid().slice(-6).toUpperCase()) : ("V-" + uid().slice(-6).toUpperCase())),
+      party: fd.get("party"), category: fd.get("category"),
       desc: fd.get("desc"), paymentMethod: fd.get("paymentMethod"), amount: Number(fd.get("amount")) || 0,
       notes: fd.get("notes"),
       createdAt: editing ? (editing.createdAt || null) : nowISO(),
@@ -5069,6 +5084,7 @@ function renderMoneyPage(kind) {
       pushFailedOnline = true;
     }
     state.editId = null;
+    state.tablePage[`money_${kind}`] = 1;
     if (rec.date) state[monthStateKey] = rec.date.slice(0, 7); // اعرض الشهر اللى اتسجّلت فيه العملية تلقائيًا
     if (pushFailedOnline) {
       showToast(`💾 ${editing ? "تم حفظ التعديل" : "تم التسجيل"} محليًا — تعذّر رفعه للسحابة الآن وسيُعاد رفعه تلقائيًا عند توفر الاتصال`, 3800);
