@@ -1825,35 +1825,22 @@ async function loadAll() {
     if (!a.status) { a.status = "نشط"; upgraded = true; }
     if (!a.createdAt) { a.createdAt = todayISO(); upgraded = true; }
     if (a.lastLogin === undefined) { a.lastLogin = null; upgraded = true; }
-    if (!a.permissions) { a.permissions = fullPermissions(); upgraded = true; }
-    // ترقية إضافية: أقسام صلاحيات جديدة أُضيفت لاحقًا (الرئيسية، ملفات المرضى،
-    // دفتر الخزينة، مرضى لهم مستحقات) لم تكن موجودة أصلًا فى صلاحيات الحسابات
-    // القديمة. لو تركناها بلا قيمة، ستُقرأ كـ false تلقائيًا فى can() فيختفى
-    // القسم فجأة من شاشة موظف كان يراه بشكل طبيعى قبل هذا التحديث. لذا: أي مفتاح
-    // صلاحية جديد غير موجود بعد فى حساب قائم يُمنح "عرض" تلقائيًا مرة واحدة فقط
-    // (بدون المساس بأي صلاحية أخرى ضبطها المدير يدويًا من قبل).
+    if (typeof a.permissions === "string") {
+      try { a.permissions = JSON.parse(a.permissions); } catch (e) { a.permissions = null; }
+    }
+    if (!a.permissions || typeof a.permissions !== "object") {
+      a.permissions = a.role === "مدير" ? fullPermissions() : emptyPermissions();
+      upgraded = true;
+    }
     PERMISSION_MODULES.forEach(m => {
       if (!a.permissions[m.key]) { a.permissions[m.key] = {}; upgraded = true; }
       m.actions.forEach(act => {
-        if (a.permissions[m.key][act.key] === undefined) { a.permissions[m.key][act.key] = true; upgraded = true; }
+        if (a.permissions[m.key][act.key] === undefined) {
+          a.permissions[m.key][act.key] = a.role === "مدير";
+          upgraded = true;
+        }
       });
     });
-    // ترقية أمان تشغيلية: الحسابات النشطة للموظفين التي لم تُضبط صلاحياتها تفصيليًا
-    // وتملك قيم false كحد افتراضي في الأقسام التشغيلية (المنصرف، المرتبات، الوارد)
-    // نمنحها صلاحية (عرض/إضافة/تعديل) تلقائيًا حتى لا تُحجب البيانات عند دخول الموظف.
-    if (a.role === "موظف" && a.status !== "موقوف") {
-      const opKeys = ["expense", "income", "payroll", "clinic", "dental"];
-      for (const k of opKeys) {
-        if (a.permissions[k]) {
-          if (a.permissions[k].view === false && a.permissions[k].add === false) {
-            a.permissions[k].view = true;
-            a.permissions[k].add = true;
-            a.permissions[k].edit = true;
-            upgraded = true;
-          }
-        }
-      }
-    }
   });
   if (upgraded) persist("staffAccounts");
 
@@ -2618,6 +2605,9 @@ function sbFromRow(key, row) {
       val = val.slice(0, 10);
     }
     obj[jsField] = val;
+  }
+  if (key === "staffAccounts" && typeof obj.permissions === "string") {
+    try { obj.permissions = JSON.parse(obj.permissions); } catch (e) { /* ignore */ }
   }
   return obj;
 }
@@ -3437,14 +3427,21 @@ function computeNotifications() {
   if (can("patientFilesClinic","view") || can("patientFilesDental","view") || can("clinic","view") || can("dental","view")) {
     const weekAhead = new Date(); weekAhead.setDate(weekAhead.getDate() + 7);
     const weekAheadISO = localISO(weekAhead);
-    const upcoming = groupPatients(allPatientVisits()).filter(g => g.nextFollowUp && g.nextFollowUp.nextVisitDate >= todayISO() && g.nextFollowUp.nextVisitDate <= weekAheadISO);
+    const allowedVisits = [];
+    if (can("clinic", "view") || can("patientFilesClinic", "view")) {
+      allowedVisits.push(...(DB.visitsClinic || []).map(v => ({ ...v, kind: "عيادات" })));
+    }
+    if (can("dental", "view") || can("patientFilesDental", "view")) {
+      allowedVisits.push(...(DB.visitsDental || []).map(v => ({ ...v, kind: "أسنان" })));
+    }
+    const upcoming = groupPatients(allowedVisits).filter(g => g.nextFollowUp && g.nextFollowUp.nextVisitDate >= todayISO() && g.nextFollowUp.nextVisitDate <= weekAheadISO);
     if (upcoming.length) {
       items.push({
         id: "followup",
         icon: "🔔",
         title: "مواعيد المتابعة",
         text: `${upcoming.length} موعد متابعة خلال الأسبوع القادم`,
-        page: can("patientFilesClinic","view") ? "patientFilesClinic" : "patientFilesDental"
+        page: (can("patientFilesClinic","view") || can("clinic","view")) ? "patientFilesClinic" : "patientFilesDental"
       });
     }
   }
