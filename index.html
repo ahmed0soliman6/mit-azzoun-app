@@ -785,6 +785,13 @@ async function queueTableForSync(key) {
   } catch (e) { /* ignore */ }
 }
 async function unqueueTable(key) {
+  // لا يُحذف الجدول من طابور المزامنة طالما كان لا يزال يحتوي على معرفات في getDeletedQueue(key) أو سجلات معلّقة في LOCAL_PENDING_RECORDS[key]
+  try {
+    const delQueue = await getDeletedQueue(key);
+    if (delQueue && delQueue.length > 0) return;
+    const pendingMap = typeof pendingRecordsFor === "function" ? pendingRecordsFor(key) : null;
+    if (pendingMap && pendingMap.size > 0) return;
+  } catch (e) {}
   if (IDB_OK) { await idbDeleteKey(IDB_STORE_QUEUE, key); return; }
   try {
     const raw = localStorage.getItem(APP_PREFIX + "pendingQueue");
@@ -793,11 +800,27 @@ async function unqueueTable(key) {
   } catch (e) { /* ignore */ }
 }
 async function getPendingQueueKeys() {
-  if (IDB_OK) return (await idbGetAllKeys(IDB_STORE_QUEUE)) || [];
+  const keysSet = new Set();
+  if (IDB_OK) {
+    const idbKeys = (await idbGetAllKeys(IDB_STORE_QUEUE)) || [];
+    idbKeys.forEach(k => keysSet.add(k));
+  }
   try {
     const raw = localStorage.getItem(APP_PREFIX + "pendingQueue");
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) { return []; }
+    if (raw) JSON.parse(raw).forEach(k => keysSet.add(k));
+  } catch (e) {}
+  // فحص طوابير الحذف والسجلات المعلقة
+  try {
+    if (typeof SB_TABLES !== "undefined") {
+      for (const k of Object.keys(SB_TABLES)) {
+        const delQueue = await getDeletedQueue(k);
+        if (delQueue && delQueue.length > 0) keysSet.add(k);
+        const pendingMap = typeof pendingRecordsFor === "function" ? pendingRecordsFor(k) : null;
+        if (pendingMap && pendingMap.size > 0) keysSet.add(k);
+      }
+    }
+  } catch (e) {}
+  return Array.from(keysSet);
 }
 
 // "خط الأساس" (Sync Baseline): آخر نسخة من كل جدول كانت معروفة أنها متطابقة
@@ -839,6 +862,28 @@ function isIdDeleted(id) {
   return DELETED_IDS_TOMBSTONES.has(id);
 }
 
+function applyRemoteTombstones(ids) {
+  if (!Array.isArray(ids) || !ids.length) return;
+  let anyNew = false;
+  for (const id of ids) {
+    if (id && !DELETED_IDS_TOMBSTONES.has(id)) {
+      markIdAsDeleted(id);
+      anyNew = true;
+    }
+  }
+  if (anyNew && typeof SB_TABLES !== "undefined") {
+    for (const key of Object.keys(SB_TABLES)) {
+      if (Array.isArray(DB[key])) {
+        const before = DB[key].length;
+        DB[key] = DB[key].filter(r => r && r.id && !isIdDeleted(r.id));
+        if (DB[key].length !== before) {
+          cacheLocally(key, DB[key]).catch(() => {});
+        }
+      }
+    }
+  }
+}
+
 async function queueDeletion(tableKey, id) {
   if (!tableKey || !id) return;
   markIdAsDeleted(id);
@@ -875,7 +920,7 @@ async function executeRecordDeletion(tableKey, id) {
   return runTableSync(tableKey, () => executeRecordDeletionInner(tableKey, id));
 }
 async function executeRecordDeletionInner(tableKey, id) {
-  if (!tableKey || !id) return;
+  if (!tableKey || !id) return false;
   markIdAsDeleted(id);
   await queueDeletion(tableKey, id);
 
@@ -891,26 +936,49 @@ async function executeRecordDeletionInner(tableKey, id) {
     }
   } catch (e) {}
 
-  // محاولة حذف مباشر وفوري من السحابة إذا كان المتصفح متصلًا بالإنترنت
+  // محاولة حذف مؤكد ومباشر من السحابة إذا كان المتصفح متصلًا بالإنترنت
   if (typeof sbClient !== "undefined" && sbClient && typeof STORAGE_MODE !== "undefined" && STORAGE_MODE === "supabase" && navigator.onLine) {
-    const sqlTable = typeof SB_TABLES !== "undefined" && SB_TABLES[tableKey];
-    if (sqlTable) {
-      try {
-        const { error } = await sbClient.from(sqlTable).delete().eq("id", id);
-        if (!error) {
-          await clearDeletedQueue(tableKey, [id]);
+    try {
+      if (typeof sbDeleteVerified === "function") {
+        const ok = await sbDeleteVerified(tableKey, [id]);
+        return !!ok;
+      } else {
+        const sqlTable = typeof SB_TABLES !== "undefined" && SB_TABLES[tableKey];
+        if (sqlTable) {
+          const { error } = await sbClient.from(sqlTable).delete().eq("id", id);
+          if (!error) { await clearDeletedQueue(tableKey, [id]); return true; }
         }
-      } catch (err) {
-        console.warn(`Direct delete for ${tableKey}:${id} will be retried in sync queue:`, err);
       }
+    } catch (err) {
+      console.warn(`Direct delete for ${tableKey}:${id} failed, will retry:`, err);
+      return false;
     }
   }
+  return false;
 }
 
 function stripUpdatedAt(o) { const c = Object.assign({}, o); delete c.updatedAt; return c; }
+function normalizeRecordForCompare(o) {
+  if (!o || typeof o !== "object") return o;
+  const copy = Object.assign({}, o);
+  delete copy.updatedAt;
+  const numFields = new Set([
+    "amount", "total", "paid", "salary", "paidAmount", "docShare", "clinicShare",
+    "docPct", "clinicPct", "checkupPrice", "checkupClinicFee", "followupPrice",
+    "followupClinicFee", "dailyFixedAmount", "clinicFeeSnapshot", "xray", "lab", "services", "order"
+  ]);
+  for (const [k, v] of Object.entries(copy)) {
+    if (v === undefined || v === "") copy[k] = null;
+    else if (numFields.has(k) && v !== null) {
+      const n = Number(v);
+      copy[k] = isNaN(n) ? v : n;
+    }
+  }
+  return copy;
+}
 function recordsEqual(a, b) {
   if (!a || !b) return false;
-  return JSON.stringify(stripUpdatedAt(a)) === JSON.stringify(stripUpdatedAt(b));
+  return JSON.stringify(normalizeRecordForCompare(a)) === JSON.stringify(normalizeRecordForCompare(b));
 }
 
 // تعارضات بانتظار مراجعة يدوية من المدير (تُستخدم فقط إذا كان خيار
@@ -1116,6 +1184,40 @@ async function markLocalChangesPending(key, rows) {
 function remoteConfirmsLocal(local, remote) {
   return !!(local && remote && recordsEqual(local, remote));
 }
+async function mergeSingleDeltaItem(key, item) {
+  if (!item || !item.id || isIdDeleted(item.id)) return;
+  if (!Array.isArray(DB[key])) DB[key] = [];
+  const list = DB[key];
+  const pending = typeof pendingRecordsFor === "function" ? pendingRecordsFor(key) : null;
+  const idx = list.findIndex(r => r && r.id === item.id);
+  if (idx > -1) {
+    const local = list[idx];
+    if (pending && pending.has(item.id)) {
+      if (remoteConfirmsLocal(local, item)) {
+        pending.delete(item.id);
+      } else {
+        return; // احتفظ بالنسخة المحلية غير المرفوعة بعد
+      }
+    }
+    const localTime = local.updatedAt || "";
+    const remoteTime = item.updatedAt || "";
+    if (!localTime || remoteTime >= localTime) {
+      list[idx] = item;
+    }
+  } else {
+    list.push(item);
+  }
+  const cleanList = list.filter(r => r && r.id && !isIdDeleted(r.id));
+  DB[key] = cleanList;
+  await cacheLocally(key, cleanList);
+
+  const base = await readSyncBaseline(key);
+  if (Array.isArray(base)) {
+    const bIdx = base.findIndex(r => r && r.id === item.id);
+    if (bIdx > -1) base[bIdx] = item; else base.push(item);
+    await writeSyncBaseline(key, base);
+  }
+}
 async function mergeRemoteSnapshot(key, remoteRows) {
   if (!Array.isArray(remoteRows)) return remoteRows;
   const cached = await readLocalCache(key, []);
@@ -1126,19 +1228,20 @@ async function mergeRemoteSnapshot(key, remoteRows) {
   const remoteMap = new Map(remoteRows.filter(r => r && r.id).map(r => [r.id, r]));
   const mergedMap = new Map();
 
+  // فحص أمان: إن كان عدد العناصر السحابية الممرّرة صغيرًا مقارنة بالـ baseline،
+  // فهذا قد يكون تحديثًا جزئيًا (مثل Realtime) وليس لقطة شاملة كاملة للجدول.
+  // في هذه الحالة لا نعتبر السجلات الغائبة محذوفة من السيرفر، لمنع مسح بيانات الجدول!
+  const isFullSnapshot = remoteRows.length >= (baseline || []).length * 0.5 || (baseline || []).length <= 2;
+
   for (const local of localRows) {
     if (!local || !local.id || isIdDeleted(local.id)) continue;
     const remote = remoteMap.get(local.id);
     if (!remote) {
-      // السجل غير المؤكد محليًا لا يُحذف لمجرد غيابه من لقطة قديمة.
-      if (pending.has(local.id)) {
-        mergedMap.set(local.id, local);
-      } else if (!baselineMap.has(local.id)) {
-        // سجل محلي لا نعرف إن كان وصل للخادم أصلًا؛ احتفظ به احتياطيًا.
+      // السجل غير المؤكد محليًا أو غائب عن لقطة جزئية لا يُحذف.
+      if (pending.has(local.id) || !baselineMap.has(local.id) || !isFullSnapshot) {
         mergedMap.set(local.id, local);
       }
-      // أما السجل المؤكد في الـ baseline ثم اختفى من لقطة كاملة، فهو حذف
-      // خادمي حقيقي من جهاز آخر ويجب أن يختفي محليًا أيضًا.
+      // أما إذا كانت لقطة كاملة حقيقية والسجل مؤكد سابقًا واختفى، فهو حذف خادمي
       continue;
     }
     if (pending.has(local.id)) {
@@ -2216,9 +2319,10 @@ function payrollPaidAmount(rec) {
 // تعديل لاحق، ويحذفها تمامًا لو أصبح المدفوع فعليًا صفرًا (حالة "مؤجل") - لتفادى
 // الإدخال المزدوج (مرة فى المرتبات ومرة يدويًا فى المنصرف) مع الحفاظ على دقة
 // رصيد الخزينة (لا يدخلها إلا ما خرج فعلًا، لا أكثر ولا أقل).
-function syncPayrollExpenseLink(rec) {
+function syncPayrollExpenseLink(rec, skipPersist) {
   const linked = rec.linkedExpenseId ? DB.expense.find(x => x.id === rec.linkedExpenseId) : null;
   const paidNow = payrollPaidAmount(rec);
+  const creator = currentUser ? currentUser.displayName : "";
   if (paidNow > 0) {
     const desc = `${rec.type || "مرتب"} — ${rec.name} — ${rec.month}${rec.status === "جزئي" ? " (دفعة جزئية)" : ""}`;
     if (linked) {
@@ -2226,54 +2330,59 @@ function syncPayrollExpenseLink(rec) {
       linked.party = rec.name;
       linked.desc = desc;
       linked.amount = paidNow;
+      linked.updatedAt = nowISO();
+      if (!linked.createdBy && creator) linked.createdBy = creator;
     } else {
       const exp = {
         id: uid(), date: payrollExpenseDate(rec), voucherNo: `PR-${rec.month}${rec.day ? "-" + rec.day : ""}`,
         party: rec.name, category: "مرتبات", desc,
         paymentMethod: "نقدي", amount: paidNow,
-        responsible: currentUser ? currentUser.displayName : "", notes: "تم إنشاؤه تلقائيًا من سجل المرتبات والمستحقات",
-        createdAt: nowISO(),
+        responsible: creator, notes: "تم إنشاؤه تلقائيًا من سجل المرتبات والمستحقات",
+        createdAt: nowISO(), createdBy: creator, updatedAt: nowISO(),
       };
       DB.expense.push(exp);
       rec.linkedExpenseId = exp.id;
     }
-    persist("expense");
+    if (!skipPersist) persist("expense");
   } else if (linked) {
-    const idx = DB.expense.findIndex(x => x.id === linked.id);
+    const removedExpId = linked.id;
+    const idx = DB.expense.findIndex(x => x.id === removedExpId);
     if (idx > -1) DB.expense.splice(idx, 1);
     rec.linkedExpenseId = null;
-    persist("expense");
+    executeRecordDeletion("expense", removedExpId);
+    if (!skipPersist) persist("expense");
   }
 }
-// يربط مصروف المعمل الشهري لكل طبيب بحركة منصرف حقيقية فى دفتر الخزينة، بنفس
-// أسلوب ربط المرتبات أعلاه بالضبط - حتى يعكس رصيد الخزينة فعليًا المبلغ الذى
-// خرج بالفعل من المجمع لسداد المعمل، بدل أن يكون مجرد رقم فى حساب تسوية منفصل
-// لا يظهر أثره على النقدية الفعلية.
-function syncLabExpenseTreasuryLink(rec, doctorName) {
+function syncLabExpenseTreasuryLink(rec, doctorName, skipPersist) {
   const linked = rec.linkedExpenseId ? DB.expense.find(x => x.id === rec.linkedExpenseId) : null;
   const amount = Number(rec.amount) || 0;
+  const creator = currentUser ? currentUser.displayName : "";
   if (amount > 0) {
     const desc = `مصروف معمل — ${doctorName} — ${monthLabel(rec.month)}`;
     if (linked) {
       linked.party = doctorName; linked.desc = desc; linked.amount = amount;
       linked.date = linked.date || `${rec.month}-01`;
+      linked.updatedAt = nowISO();
+      if (!linked.createdBy && creator) linked.createdBy = creator;
     } else {
       const exp = {
         id: uid(), date: `${rec.month}-01`, voucherNo: `LAB-${rec.month}-${doctorName}`,
         party: doctorName, category: "معمل", desc,
         paymentMethod: "نقدي", amount,
-        responsible: currentUser ? currentUser.displayName : "", notes: "تم إنشاؤه تلقائيًا من تسوية حساب الأطباء",
-        createdAt: nowISO(),
+        responsible: creator, notes: "تم إنشاؤه تلقائيًا من تسوية حساب الأطباء",
+        createdAt: nowISO(), createdBy: creator, updatedAt: nowISO(),
       };
       DB.expense.push(exp);
       rec.linkedExpenseId = exp.id;
     }
-    persist("expense");
+    if (!skipPersist) persist("expense");
   } else if (linked) {
-    const idx = DB.expense.findIndex(x => x.id === linked.id);
+    const removedExpId = linked.id;
+    const idx = DB.expense.findIndex(x => x.id === removedExpId);
     if (idx > -1) DB.expense.splice(idx, 1);
     rec.linkedExpenseId = null;
-    persist("expense");
+    executeRecordDeletion("expense", removedExpId);
+    if (!skipPersist) persist("expense");
   }
 }
 // يربط زيارة (عيادة أو أسنان) بها مبلغ محصَّل فعليًا ("المدفوع" أكبر من صفر) تلقائيًا
@@ -2407,21 +2516,85 @@ const SB_FIELD_MAPS = {
 // أعمدة من النوع date فى قاعدة البيانات - لا تقبل نص فارغ "" (على عكس أعمدة
 // النصوص العادية)، فيجب أن تتحول أي قيمة فارغة فيها إلى null قبل الرفع، وإلا
 // فشلت المزامنة برسالة "invalid input syntax for type date".
+// أعمدة من النوع date فى قاعدة البيانات - لا تقبل نص فارغ "" (على عكس أعمدة
+// النصوص العادية)، فيجب أن تتحول أي قيمة فارغة فيها إلى null قبل الرفع، وإلا
+// فشلت المزامنة برسالة "invalid input syntax for type date".
 const SB_DATE_COLUMNS = new Set(["date", "next_visit_date"]);
+
+// ======================================================================
+// المعالجة الديناميكية لاختلاف أعمدة جداول Supabase
+// ======================================================================
+const SB_KNOWN_COLUMNS = Object.create(null);
+const SB_MISSING_COLUMNS_KEY = APP_PREFIX + "sb_missing_cols";
+let SB_MISSING_COLUMNS = Object.create(null);
+try {
+  const savedMissing = localStorage.getItem(SB_MISSING_COLUMNS_KEY);
+  if (savedMissing) SB_MISSING_COLUMNS = JSON.parse(savedMissing) || Object.create(null);
+} catch (e) { SB_MISSING_COLUMNS = Object.create(null); }
+
+function markSbColumnMissing(sqlTable, colName) {
+  if (!sqlTable || !colName) return;
+  if (!SB_MISSING_COLUMNS[sqlTable]) SB_MISSING_COLUMNS[sqlTable] = [];
+  if (!SB_MISSING_COLUMNS[sqlTable].includes(colName)) {
+    SB_MISSING_COLUMNS[sqlTable].push(colName);
+    try { localStorage.setItem(SB_MISSING_COLUMNS_KEY, JSON.stringify(SB_MISSING_COLUMNS)); } catch (e) {}
+  }
+  if (SB_KNOWN_COLUMNS[sqlTable]) {
+    SB_KNOWN_COLUMNS[sqlTable].delete(colName);
+  }
+}
+
+function recordSbKnownColumns(sqlTable, rows) {
+  if (!sqlTable || !Array.isArray(rows) || !rows.length) return;
+  if (!SB_KNOWN_COLUMNS[sqlTable]) SB_KNOWN_COLUMNS[sqlTable] = new Set();
+  const set = SB_KNOWN_COLUMNS[sqlTable];
+  for (const r of rows) {
+    if (r && typeof r === "object") {
+      for (const k of Object.keys(r)) set.add(k);
+    }
+  }
+}
+
+function extractMissingColumnFromError(err) {
+  if (!err) return null;
+  const msg = (err.message || err.details || err.hint || String(err));
+  let m = msg.match(/Could not find the '([^']+)' column/i);
+  if (m && m[1]) return m[1];
+  m = msg.match(/column "([^"]+)" of relation/i);
+  if (m && m[1]) return m[1];
+  m = msg.match(/column "([^"]+)" does not exist/i);
+  if (m && m[1]) return m[1];
+  m = msg.match(/column [a-zA-Z0-9_]+\.([a-zA-Z0-9_]+) does not exist/i);
+  if (m && m[1]) return m[1];
+  return null;
+}
+
 function sbToRow(key, obj) {
   const map = SB_FIELD_MAPS[key];
+  const sqlTable = SB_TABLES[key];
+  const missingList = (sqlTable && SB_MISSING_COLUMNS[sqlTable]) ? SB_MISSING_COLUMNS[sqlTable] : [];
+  const knownSet = (sqlTable && SB_KNOWN_COLUMNS[sqlTable] && SB_KNOWN_COLUMNS[sqlTable].size > 0) ? SB_KNOWN_COLUMNS[sqlTable] : null;
   const row = {};
   for (const [jsField, sqlField] of Object.entries(map)) {
+    if (sqlField !== "id" && missingList.includes(sqlField)) continue;
+    if (sqlField !== "id" && knownSet && !knownSet.has(sqlField)) continue;
     let v = obj[jsField] ?? null;
     if (v === "" && SB_DATE_COLUMNS.has(sqlField)) v = null;
     row[sqlField] = v;
   }
   return row;
 }
+
 function sbFromRow(key, row) {
   const map = SB_FIELD_MAPS[key];
   const obj = {};
-  for (const [jsField, sqlField] of Object.entries(map)) obj[jsField] = row[sqlField];
+  for (const [jsField, sqlField] of Object.entries(map)) {
+    let val = row[sqlField];
+    if (SB_DATE_COLUMNS.has(sqlField) && typeof val === "string" && val.length > 10) {
+      val = val.slice(0, 10);
+    }
+    obj[jsField] = val;
+  }
   return obj;
 }
 
@@ -2535,6 +2708,9 @@ async function sbSelectAll(table, selectFields = "*") {
     if (data.length < CHUNK_SIZE) break;
     from += CHUNK_SIZE;
   }
+  if (selectFields === "*" && allRows.length) {
+    recordSbKnownColumns(table, allRows);
+  }
   return allRows;
 }
 async function sbLoadTable(key) {
@@ -2548,19 +2724,190 @@ async function sbLoadTable(key) {
     return null;
   }
 }
-// دفع "ذكى" واعٍ بالتعارضات (مرحلة ج): بدلًا من استبدال الجدول السحابى بالكامل
-// بنسخة الجهاز الحالى (وهو ما قد يحذف سجلات أضافها جهاز آخر لم تصل بعد لهذا
-// الجهاز)، يقارن هذا الدفع كل سجل بنظيره السحابى، ويحسم أى اختلاف بالطابع
-// الزمنى (الأحدث يفوز تلقائيًا)، أو يوقف القرار لمراجعة المدير يدويًا إن كان
-// خيار "مراجعة التعارضات يدويًا" مفعّلًا. يُرجع النسخة المحلية المدمَجة النهائية.
+
+// ======================================================================
+// دالة حذف مؤكدة من الخادم ومزامنة العلاقات
+// ======================================================================
+async function sbDeleteVerified(tableKey, idsToDelete) {
+  if (!tableKey || !Array.isArray(idsToDelete) || !idsToDelete.length) return true;
+  const sqlTable = SB_TABLES[tableKey];
+  if (!sqlTable || !sbClient || STORAGE_MODE !== "supabase" || !navigator.onLine) return false;
+
+  const CHUNK = 200;
+  const chunkArray = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
+
+  for (const batch of chunkArray(idsToDelete, CHUNK)) {
+    // 1) فك الارتباط المسبق في السحابة لتفادي قيود المفاتيح الأجنبية
+    if (tableKey === "income") {
+      try {
+        await sbClient.from("visits_clinic").update({ linked_income_id: null }).in("linked_income_id", batch);
+        await sbClient.from("visits_dental").update({ linked_income_id: null }).in("linked_income_id", batch);
+      } catch (e) { console.warn("Unlinking visits before income delete failed:", e); }
+    } else if (tableKey === "expense") {
+      try {
+        await sbClient.from("payroll").update({ linked_expense_id: null }).in("linked_expense_id", batch);
+        await sbClient.from("lab_expenses").update({ linked_expense_id: null }).in("linked_expense_id", batch);
+      } catch (e) { console.warn("Unlinking payroll before expense delete failed:", e); }
+    }
+
+    // 2) محاولة الحذف الفعلي
+    let { data: delData, error: delErr } = await sbClient.from(sqlTable).delete().in("id", batch).select("id");
+    if (delErr) {
+      const isFkErr = delErr.code === "23503" || /foreign key/i.test(delErr.message || "");
+      if (isFkErr) {
+        if (tableKey === "income") {
+          await sbClient.from("visits_clinic").update({ linked_income_id: null }).in("linked_income_id", batch);
+          await sbClient.from("visits_dental").update({ linked_income_id: null }).in("linked_income_id", batch);
+        } else if (tableKey === "expense") {
+          await sbClient.from("payroll").update({ linked_expense_id: null }).in("linked_expense_id", batch);
+          await sbClient.from("lab_expenses").update({ linked_expense_id: null }).in("linked_expense_id", batch);
+        }
+        const retry = await sbClient.from(sqlTable).delete().in("id", batch).select("id");
+        if (retry.error) throw retry.error;
+        delData = retry.data;
+      } else {
+        throw delErr;
+      }
+    }
+
+    // 3) التحقق الصريح من أن السجلات لم تعد موجودة على الخادم
+    const deletedIds = new Set((delData || []).map(r => r.id));
+    const unconfirmed = batch.filter(id => !deletedIds.has(id));
+    if (unconfirmed.length) {
+      const { data: stillExisting, error: chkErr } = await sbClient.from(sqlTable).select("id").in("id", unconfirmed);
+      if (!chkErr && stillExisting && stillExisting.length > 0) {
+        throw new Error(`Failed to confirm deletion on server for ${sqlTable}: ${stillExisting.map(x=>x.id).join(",")}`);
+      }
+    }
+
+    // 4) مسح المعرفات المحذوفة من الطابور المحلي وتحديث خط الأساس
+    await clearDeletedQueue(tableKey, batch);
+    try {
+      const base = await readSyncBaseline(tableKey);
+      if (Array.isArray(base)) {
+        await writeSyncBaseline(tableKey, base.filter(r => r && !batch.includes(r.id)));
+      }
+    } catch (e) {}
+  }
+  return true;
+}
+
+// ======================================================================
+// دالة رفع مؤكدة مع إعادة المحاولة التلقائية ومعالجة فروقات المخطط
+// ======================================================================
+async function sbUpsertVerified(key, records) {
+  if (!key || !Array.isArray(records) || !records.length) return true;
+  const sqlTable = SB_TABLES[key];
+  if (!sqlTable || !sbClient || STORAGE_MODE !== "supabase" || !navigator.onLine) return false;
+
+  const CHUNK = 200;
+  const chunkArray = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
+
+  const modernOptionalCols = [
+    "created_by", "created_at", "updated_at", "clinic_fee_snapshot", "doc_share", "clinic_share",
+    "doctor_id", "paid_amount", "linked_expense_id", "linked_income_id", "next_visit_date", "order_index"
+  ];
+  const numFields = new Set([
+    "amount", "total", "paid", "salary", "paid_amount", "doc_share", "clinic_share",
+    "xray", "lab", "services", "checkup_price", "checkup_clinic_fee", "followup_price",
+    "followup_clinic_fee", "daily_fixed_amount", "clinic_fee_snapshot", "order_index"
+  ]);
+
+  for (const recBatch of chunkArray(records, CHUNK)) {
+    let batch = recBatch.map(o => sbToRow(key, o));
+    const batchIds = recBatch.map(o => o.id).filter(Boolean);
+    let attempts = 0;
+    let success = false;
+    let upsertedData = null;
+
+    while (attempts < 10 && !success) {
+      attempts++;
+      const res = await sbClient.from(sqlTable).upsert(batch, { onConflict: "id" }).select("id");
+      if (!res.error) {
+        success = true;
+        upsertedData = res.data;
+        break;
+      }
+      const err = res.error;
+      console.warn(`sbUpsertVerified attempt ${attempts} for ${sqlTable} failed:`, err);
+
+      // أ) عمود مفقود في جدول Supabase
+      const missingCol = extractMissingColumnFromError(err);
+      if (missingCol) {
+        markSbColumnMissing(sqlTable, missingCol);
+        batch.forEach(row => { delete row[missingCol]; });
+        continue;
+      }
+
+      // ب) خطأ مخطط أو كاش مخطط عام
+      const isSchemaErr = err.code === "PGRST204" || err.code === "42703" || /schema cache|column/i.test(err.message || "");
+      if (isSchemaErr) {
+        const knownSet = SB_KNOWN_COLUMNS[sqlTable];
+        for (const col of modernOptionalCols) {
+          if (!knownSet || !knownSet.has(col)) {
+            markSbColumnMissing(sqlTable, col);
+            batch.forEach(row => { delete row[col]; });
+          }
+        }
+        continue;
+      }
+
+      // ج) قيد NOT NULL
+      if (err.code === "23502" || /not-null|violates not-null/i.test(err.message || "")) {
+        let col = extractMissingColumnFromError(err);
+        if (!col) {
+          const m = (err.message || "").match(/column "([^"]+)" of relation.*violates not-null/i);
+          if (m && m[1]) col = m[1];
+        }
+        if (col) {
+          batch.forEach(row => {
+            if (row[col] === null || row[col] === undefined) {
+              row[col] = numFields.has(col) ? 0 : "";
+            }
+          });
+          continue;
+        }
+      }
+
+      // د) قيد المفتاح الأجنبي Foreign Key
+      if (err.code === "23503" || /foreign key/i.test(err.message || "")) {
+        batch.forEach(row => {
+          if ("linked_income_id" in row) row.linked_income_id = null;
+          if ("linked_expense_id" in row) row.linked_expense_id = null;
+          if ("doctor_id" in row) row.doctor_id = null;
+        });
+        continue;
+      }
+
+      // خطأ غير قابل للإصلاح تلقائيًا
+      throw err;
+    }
+
+    if (!success) {
+      throw new Error(`Failed to upsert records into ${sqlTable} after 10 attempts.`);
+    }
+
+    // تأكيد الحفظ الفعلي على الخادم
+    const returnedIds = new Set((upsertedData || []).map(r => r.id));
+    const missingVerify = batchIds.filter(id => !returnedIds.has(id));
+    if (missingVerify.length) {
+      const { data: verifyData, error: vErr } = await sbClient.from(sqlTable).select("id").in("id", missingVerify);
+      if (vErr) throw vErr;
+      const confirmedIds = new Set((verifyData || []).map(r => r.id));
+      const stillMissing = missingVerify.filter(id => !confirmedIds.has(id));
+      if (stillMissing.length) {
+        throw new Error(`Failed to verify upsert on server for ${sqlTable}: ${stillMissing.join(",")}`);
+      }
+    }
+  }
+  return true;
+}
+
+// دفع "ذكى" واعٍ بالتعارضات مع تنفيذ الحذف والرفع المؤكد
 async function pushTableSmart(key, localArr) {
   const table = SB_TABLES[key];
   const baseline = await readSyncBaseline(key);
   const baseMap = new Map((baseline || []).map(r => [r.id, r]));
-  // بعض الجداول (سجل النشاط تحديدًا) سجلات ثابتة لا تُعدَّل أبدًا بعد إنشائها
-  // ولا تملك عمود updated_at أصلًا (تستخدم created_at بدلًا منه) - المزامنة
-  // بالفارق الزمني غير مجدية لها على أي حال (كل سجل جديد فقط، لا تعديلات)،
-  // فنكتفي لها بالسلوك الكامل القديم (جلب كل شىء) لتفادى خطأ استعلام عمود غير موجود.
   const supportsDelta = !!(SB_FIELD_MAPS[key] && SB_FIELD_MAPS[key].updatedAt);
   let remoteArr;
   if (!supportsDelta) {
@@ -2585,8 +2932,6 @@ async function pushTableSmart(key, localArr) {
         remoteArr.push(...(fullRows || []).map(row => sbFromRow(key, row)));
       }
     }
-    // السجلات التى لم تتغيّر أصلًا (نفس updated_at المعروف سابقًا) نعيد استخدام
-    // نسختها المخزَّنة محليًا بدل إعادة تنزيلها، فهى مطابقة للسحابة بالتعريف.
     for (const [id] of remoteIdMap) {
       if (!idsNeedingFullFetch.includes(id)) {
         const baseRec = baseMap.get(id);
@@ -2611,17 +2956,21 @@ async function pushTableSmart(key, localArr) {
     if (isIdDeleted(delId)) toDeleteSet.add(delId);
   }
 
-  // 2) لا نستنتج الحذف من غياب سجل في لقطة محلية. الحذف الوحيد المسموح
-  // هو طابور الحذف/شاهد الحذف الصريح؛ اللقطة قد تكون قديمة أو متأثرة بطلب سابق.
-
-  // 3) معالجة السجلات المحلية
+  // 2) معالجة السجلات المحلية
   for (const local of (localArr || [])) {
     if (!local || !local.id || isIdDeleted(local.id) || toDeleteSet.has(local.id) || deletedSet.has(local.id)) {
-      continue; // محذوف صراحة - لا يُرفع ولا يبقى فى النسخة المدمجة
+      continue;
     }
     const remote = remoteMap.get(local.id);
     if (!remote) {
-      // السجل موجود محليًا ولم يُحذف صراحةً من هذا الجهاز - يُحتفظ به دائمًا ويُرفع للسحابة
+      // هل كان هذا السجل موجودًا مسبقًا فى خط الأساس المؤكد ولم يتغير محليًا واختفى من السحابة؟
+      const base = baseMap.get(local.id);
+      const isPendingLocally = typeof pendingRecordsFor === "function" && pendingRecordsFor(key).has(local.id);
+      const changedSinceBase = !base || !recordsEqual(base, local);
+      if (baseMap.has(local.id) && !isPendingLocally && !changedSinceBase) {
+        // حذفه مستخدم أو جهاز آخر من السحابة؛ لا تعد رفعه بل استبعده
+        continue;
+      }
       toUpsert.push(local);
       mergedLocal.push(local);
       continue;
@@ -2651,15 +3000,13 @@ async function pushTableSmart(key, localArr) {
     }
   }
 
-  // 4) معالجة السجلات السحابية (الواردة من السحابة):
+  // 3) معالجة السجلات السحابية (الواردة من السحابة)
   for (const remote of remoteArr) {
     if (!remote || !remote.id || isIdDeleted(remote.id) || toDeleteSet.has(remote.id) || deletedSet.has(remote.id)) {
-      toDeleteSet.add(remote.id); // تأكيد حذفه من السحابة إن كان ما زال موجودًا
-      continue; // محذوف - استبعده فورًا من الإضافة للنسخة المدمجة
+      toDeleteSet.add(remote.id);
+      continue;
     }
     if (!localMap.has(remote.id)) {
-      // لا تحول الغياب المحلي إلى حذف سحابي. قد تكون لقطة الإرسال أقدم من
-      // وصول INSERT/UPDATE آخر، لذلك نحتفظ دائمًا بالسجل البعيد غير المحذوف صراحة.
       mergedLocal.push(remote);
     }
   }
@@ -2677,25 +3024,13 @@ async function pushTableSmart(key, localArr) {
     if (finalMerged.length > MAX_AUDIT_ENTRIES) finalMerged.length = MAX_AUDIT_ENTRIES;
   }
 
-  // تقسيم العمليات الكبيرة إلى دفعات صغيرة (200 سجل لكل دفعة)
+  // تنفيذ الحذف أولًا ثم الرفع المؤكد
   const toDelete = Array.from(toDeleteSet);
-  const CHUNK = 200;
-  const chunkArray = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
   if (toDelete.length) {
-    for (const batch of chunkArray(toDelete, CHUNK)) {
-      const { error: delErr } = await sbClient.from(table).delete().in("id", batch);
-      // لا تمسح طابور الحذف عند الفشل؛ وإلا يختفي السجل محليًا فقط ويبقى
-      // موجودًا عند كل الأجهزة الأخرى إلى الأبد.
-      if (delErr) throw delErr;
-    }
-    await clearDeletedQueue(key, toDelete);
+    await sbDeleteVerified(key, toDelete);
   }
   if (toUpsert.length) {
-    const rows = toUpsert.map(o => sbToRow(key, o));
-    for (const batch of chunkArray(rows, CHUNK)) {
-      const { error: upsertErr } = await sbClient.from(table).upsert(batch, { onConflict: "id" });
-      if (upsertErr) throw upsertErr;
-    }
+    await sbUpsertVerified(key, toUpsert);
   }
   if (conflicts.length) await stashConflicts(conflicts);
   return finalMerged;
@@ -2742,12 +3077,19 @@ async function sbLoadCategories() {
   try {
     const { data, error } = await sbClient.from("settings").select("categories_json").eq("id", 1).maybeSingle();
     if (error || !data || !data.categories_json) return null;
-    return typeof data.categories_json === "string" ? JSON.parse(data.categories_json) : data.categories_json;
+    const parsed = typeof data.categories_json === "string" ? JSON.parse(data.categories_json) : data.categories_json;
+    if (parsed && Array.isArray(parsed._deletedIds)) {
+      applyRemoteTombstones(parsed._deletedIds);
+    }
+    return parsed;
   } catch (e) { return null; }
 }
 async function sbSaveCategories(cts) {
-  // نفس إصلاح sbSaveSettings أعلاه: رمى الخطأ الفعلى بدل ابتلاعه صامتًا.
-  const { error } = await sbClient.from("settings").upsert({ id: 1, categories_json: cts }, { onConflict: "id" });
+  // بث شواهد الحذف الدائمة بين الأجهزة لضمان عدم عودة أي سجل محذوف
+  const payload = Object.assign({}, cts, {
+    _deletedIds: Array.from(DELETED_IDS_TOMBSTONES).slice(-1000)
+  });
+  const { error } = await sbClient.from("settings").upsert({ id: 1, categories_json: payload }, { onConflict: "id" });
   if (error) { console.error("sbSaveCategories failed:", error); throw error; }
 }
 // تخصصات الأطباء تُخزّن كـ JSON فى نفس جدول settings (صف واحد ثابت id=1)،
@@ -7278,13 +7620,7 @@ async function handleUniversalRealtimePayloadInner(payload, dbKey) {
 
     if (Array.isArray(DB[dbKey])) {
       const before = JSON.stringify(DB[dbKey]);
-      await mergeRemoteSnapshot(dbKey, [item]);
-      const base = await readSyncBaseline(dbKey);
-      if (Array.isArray(base)) {
-        const bIdx = base.findIndex(r => r && r.id === item.id);
-        if (bIdx > -1) base[bIdx] = item; else base.push(item);
-        await writeSyncBaseline(dbKey, base);
-      }
+      await mergeSingleDeltaItem(dbKey, item);
       if (JSON.stringify(DB[dbKey]) !== before) {
         DATA_VERSION++;
         if (currentUser && !isMidEdit() && !isUserActivelyTyping()) route();
@@ -7311,13 +7647,7 @@ async function handleUniversalRealtimePayloadInner(payload, dbKey) {
     if (Array.isArray(DB[dbKey])) {
       if (state.editId === item.id || state.editDocId === item.id || state.editUserId === item.id || state.editEmpId === item.id) return;
       const before = JSON.stringify(DB[dbKey]);
-      await mergeRemoteSnapshot(dbKey, [item]);
-      const base = await readSyncBaseline(dbKey);
-      if (Array.isArray(base)) {
-        const bIdx = base.findIndex(r => r && r.id === item.id);
-        if (bIdx > -1) base[bIdx] = item; else base.push(item);
-        await writeSyncBaseline(dbKey, base);
-      }
+      await mergeSingleDeltaItem(dbKey, item);
       if (JSON.stringify(DB[dbKey]) !== before) {
         DATA_VERSION++;
         if (currentUser && !isMidEdit() && !isUserActivelyTyping()) route();
