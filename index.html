@@ -5130,8 +5130,21 @@ function renderMoneyPage(kind) {
         for (const visitId of clinicVisitIds) await executeRecordDeletion("visitsClinic", visitId);
         for (const visitId of dentalVisitIds) await executeRecordDeletion("visitsDental", visitId);
       } else {
-        DB.payroll.forEach(p => { if (p.linkedExpenseId === removed.id) p.linkedExpenseId = null; });
-        DB.labExpenses.forEach(l => { if (l.linkedExpenseId === removed.id) l.linkedExpenseId = null; });
+        (DB.payroll || []).forEach(p => {
+          if (p && p.linkedExpenseId === removed.id) {
+            p.status = "مؤجل";
+            p.paidAmount = null;
+            p.linkedExpenseId = null;
+            p.updatedAt = nowISO();
+          }
+        });
+        (DB.labExpenses || []).forEach(l => {
+          if (l && l.linkedExpenseId === removed.id) {
+            l.linkedExpenseId = null;
+            l.amount = 0;
+            l.updatedAt = nowISO();
+          }
+        });
       }
     }
     showToast("تم الحذف");
@@ -5139,7 +5152,7 @@ function renderMoneyPage(kind) {
     await executeRecordDeletion(isIncome ? "income" : "expense", delId);
     logActivity(isIncome ? "حذف عملية وارد" : "حذف عملية منصرف", kind, removed, null);
     await persist(isIncome ? "income" : "expense");
-    if (removed && !isIncome) { persist("payroll"); persist("labExpenses"); }
+    if (removed && !isIncome) { await persist("payroll"); await persist("labExpenses"); }
   }));
 }
 
@@ -5413,11 +5426,14 @@ function renderPayroll() {
     const rec = { id: editing ? editing.id : uid(), month: fd.get("month"), day: fd.get("day") ? Number(fd.get("day")) : null, name: fd.get("name"), type: fd.get("type"), amount, status, paidAmount: status === "جزئي" ? paidAmount : null, notes: fd.get("notes"), linkedExpenseId: editing ? (editing.linkedExpenseId || null) : null, createdAt: editing ? (editing.createdAt || null) : nowISO(), createdBy: editing ? (editing.createdBy || (currentUser ? currentUser.displayName : null)) : (currentUser ? currentUser.displayName : null) };
     const oldRec = editing ? { ...editing } : null;
     if (editing) { list[list.findIndex(v => v.id === editing.id)] = rec; } else { list.push(rec); }
-    await syncPayrollExpenseLink(rec);
+    await syncPayrollExpenseLink(rec, true);
     logActivity(editing ? "تعديل سجل مرتبات" : "إضافة سجل مرتبات", "payroll", oldRec, rec);
     let pushFailedOnline = false;
     try {
       await persist("payroll");
+      if (rec.linkedExpenseId || oldRec?.linkedExpenseId) {
+        await persist("expense");
+      }
     } catch (err) {
       console.error("Payroll entry sync push failed (saved locally, will retry):", err);
       pushFailedOnline = true;
@@ -7688,26 +7704,38 @@ async function handleUniversalRealtimePayloadInner(payload, dbKey) {
   }
 }
 
+let REALTIME_COOLDOWN_UNTIL = 0;
 function subscribeUniversalRealtime() {
   if (!sbClient || STORAGE_MODE !== "supabase" || universalRealtimeChannel) return;
+  if (Date.now() < REALTIME_COOLDOWN_UNTIL) return;
   try {
-    let channel = sbClient.channel("unified_clinic_live_v2");
+    const channel = sbClient.channel("unified_clinic_live_v2");
+    universalRealtimeChannel = channel;
     for (const [tbl, dbKey] of Object.entries(SQL_TABLE_TO_DB_KEY)) {
-      channel = channel.on("postgres_changes", { event: "*", schema: "public", table: tbl }, async (payload) => {
+      channel.on("postgres_changes", { event: "*", schema: "public", table: tbl }, (payload) => {
         handleUniversalRealtimePayload(payload, dbKey);
       });
     }
-    universalRealtimeChannel = channel.subscribe((status, err) => {
-      if (err) console.warn("Universal Realtime channel error:", err);
-      else console.log("Universal Realtime status:", status);
+    channel.subscribe((status, err) => {
+      if (err) {
+        console.warn("Universal Realtime channel error:", (err && err.message) ? err.message : String(err));
+      } else if (status !== "SUBSCRIBED") {
+        console.log("Universal Realtime status:", status);
+      }
       if (status === "CHANNEL_ERROR" || status === "CLOSED" || status === "TIMED_OUT") {
-        try { if (sbClient) sbClient.removeChannel(channel); } catch (e) {}
-        universalRealtimeChannel = null;
+        REALTIME_COOLDOWN_UNTIL = Date.now() + 10000;
+        if (universalRealtimeChannel === channel) {
+          universalRealtimeChannel = null;
+        }
+        setTimeout(() => {
+          try { if (sbClient) sbClient.removeChannel(channel); } catch (e) {}
+        }, 0);
       }
     });
   } catch (e) {
-    console.error("Universal Realtime subscribe failed:", e);
+    console.error("Universal Realtime subscribe failed:", (e && e.message) ? e.message : String(e));
     universalRealtimeChannel = null;
+    REALTIME_COOLDOWN_UNTIL = Date.now() + 10000;
   }
 }
 function subscribeStaffAccountsRealtime() { subscribeUniversalRealtime(); }
